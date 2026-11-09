@@ -1,0 +1,39 @@
+{
+  "name": "readnook",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ReadNook - 以 iPhone 为主的本地优先小说阅读 PWA",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify:build": "node scripts/verify-build.mjs",
+    "check": "npm run typecheck && npm test && npm run build && npm run verify:build",
+    "test:browser": "node scripts/browser-smoke.mjs"
+  },
+  "dependencies": {
+    "dexie": "^4.4.7",
+    "fflate": "^0.8.3",
+    "pinia": "^4.1.0",
+    "vue": "^3.5.45",
+    "vue-router": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "fake-indexeddb": "^6.2.8",
+    "playwright-core": "^1.65.0",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.6",
+    "vite-plugin-pwa": "^2.0.0",
+    "vitest": "^5.1.0",
+    "vue-tsc": "^3.3.14"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

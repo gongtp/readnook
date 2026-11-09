@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="description" content="ReadNook，本地优先、安静专注的小说阅读器。" />
+    <meta name="theme-color" content="#f6efe3" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="ReadNook" />
+    <link rel="icon" href="%BASE_URL%icons/icon.svg" type="image/svg+xml" />
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="%BASE_URL%icons/apple-touch-icon-180.png"
+    />
+    <title>ReadNook</title>
+    <script>
+      ;(() => {
+        try {
+          const theme = localStorage.getItem('readnook.theme')
+          if (theme === 'paper' || theme === 'sepia' || theme === 'dark') {
+            document.documentElement.dataset.theme = theme
+          }
+        } catch {
+          // 主题镜像不可用时使用默认主题，不影响阅读数据。
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <noscript>
+      <p style="padding: 24px; font-family: sans-serif">
+        ReadNook 需要启用 JavaScript 才能导入和阅读本地小说。
+      </p>
+    </noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

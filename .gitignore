@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dev-dist/
+coverage/
+.npm-cache/
+.vite/
+artifacts/
+*.local
+.env.local
+.env.*.local
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+ReadNook-backup-*.zip
+readnook-backup-*.zip

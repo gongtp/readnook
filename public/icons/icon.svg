@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ReadNook">
+  <rect width="512" height="512" rx="0" fill="#F6EFE3"/>
+  <rect x="90" y="137" width="332" height="256" rx="48" fill="#8B5E3C"/>
+  <path d="M122 178c0-16 13-29 29-29h77c24 0 38 14 38 38v182c0-18-12-30-30-30h-85c-16 0-29-13-29-29V178Z" fill="#FFF9F0"/>
+  <path d="M390 178c0-16-13-29-29-29h-77c-24 0-38 14-38 38v182c0-18 12-30 30-30h85c16 0 29-13 29-29V178Z" fill="#FFF9F0"/>
+  <path d="M256 187v182" stroke="#E7D3BE" stroke-width="7" stroke-linecap="round"/>
+  <path d="M154 208h57M154 242h57M154 276h40M301 208h57M301 242h57M301 276h40" stroke="#D9BFA5" stroke-width="9" stroke-linecap="round"/>
+  <path d="M256 142v72l20-14 20 14v-72" fill="#D5A36C"/>
+</svg>

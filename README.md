@@ -1,0 +1,273 @@
+# ReadNook
+
+ReadNook 是一个以 iPhone 为主、优先本地存储的 TXT 小说阅读 PWA。书架、小说原文、章节、阅读进度、书签和阅读设置都保存在当前浏览器的 IndexedDB 中，不上传服务器。
+
+- 线上地址：<https://gongtp.github.io/readnook/>
+- 仓库：<https://github.com/gongtp/readnook>
+- 第一版只支持 TXT，不包含账号、云同步、在线书源或付费功能。
+
+## 已实现
+
+- **书架**：搜索、按最近阅读/最近导入/书名排序、阅读进度展示、删除确认、空状态与加载状态。
+- **TXT 导入**：UTF-8、UTF-8 BOM、GBK、GB18030；自动检测、置信度提示、正文预览和手动切换编码。
+- **章节处理**：识别常见中文章节标题；标题前正文保留为“开篇”；无标题或超长章节按约 8000 字自动分段并标记；原始文件完整保留。
+- **本地书库**：Dexie/IndexedDB 版本化 schema；导入在单个事务中写入书籍、原文、章节、正文、进度和书签；重复文件按 SHA-256 内容摘要拦截。
+- **阅读器**：纵向滚动、上一章/下一章、目录、书签、字号/行距/页边距、米白/护眼/深色三套主题；阅读位置按“章节标识 + 章节内字符偏移”保存，滚动时节流写入。
+- **备份与恢复**：导出 ZIP（`manifest.json` + 原始 TXT），恢复前校验清单、路径、大小和 SHA-256；按内容摘要跳过重复书籍，不清空现有书库；逐本事务写入。
+- **PWA**：Web App Manifest、本地图标、Apple touch icon、安全区适配、离线缓存、等待用户确认的更新提示。
+- **隐私与可访问性**：无外部字体、图片、CDN 或统计脚本；正文只使用 `textContent`，不使用 `v-html`；提供键盘焦点样式、跳转链接、语义化对话框和状态播报。
+- **重活放到 Worker**：文件读取、编码检测、章节解析和 SHA-256 在 Web Worker 中执行，避免大文件阻塞界面。
+
+## 技术栈
+
+Vue 3 Composition API + `<script setup>`、严格 TypeScript、Vite、Vue Router Hash 模式、Pinia、Dexie、vite-plugin-pwa、原生 CSS 变量。包管理使用 npm，`package-lock.json` 已提交。
+
+## 本地开发
+
+要求：
+
+- Node.js `>= 22.12.0`（Vite 8 的要求；仓库提供 `.nvmrc`）
+- npm 10+
+- 建议使用最新版 Chrome、Edge 或 Safari
+
+```bash
+npm ci
+npm run dev
+```
+
+开发地址为 <http://localhost:5173/readnook/>。
+
+生产构建与本地预览：
+
+```bash
+npm run build
+npm run preview
+```
+
+预览地址为 <http://localhost:4173/readnook/>。Service Worker 只在构建产物和 HTTPS/localhost 下启用。
+
+### 常用命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `npm run dev` | 启动 Vite 开发服务器 |
+| `npm run typecheck` | 检查应用、Worker 和构建脚本的严格类型 |
+| `npm test` | 运行 Vitest 单元/集成测试 |
+| `npm run build` | 生成生产 PWA 到 `dist/` |
+| `npm run verify:build` | 校验构建产物、PWA 清单、图标、子路径和预缓存 |
+| `npm run test:browser` | 用本机 Chrome/Edge 做移动视口浏览器冒烟测试 |
+| `npm run check` | 类型检查 + 测试 + 构建 + 产物校验（CI 使用） |
+
+### 当前验证结果
+
+以下结果来自本机 Windows 环境，使用 Node.js `v22.15.0`、npm `10.9.2`：
+
+| 命令 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过（应用、Worker、Node 脚本） |
+| `npm test` | 6 个测试文件、68 个测试全部通过 |
+| `npm run build` | 通过；`dist/` 约 22 个文件，20 个预缓存条目 |
+| `npm run verify:build` | 通过（`/readnook/` 子路径、manifest、PNG 图标、无重复预缓存、离线回退） |
+| `npm run test:browser` | 通过；Chrome headless，390×844 移动视口，34 项检查 |
+
+浏览器冒烟测试覆盖：首次打开、Service Worker 接管、UTF-8 导入、GBK/GB18030 检测与手动切换、重复内容拦截、编码预览、开篇识别、章节切换、滚动进度、刷新恢复位置、主题持久化、书签、返回书架、导出 ZIP、删除、从备份恢复、断网刷新和断网导入。截图与结果保存在 `artifacts/browser-smoke/`（被 `.gitignore` 忽略）。
+
+> `npm run test:browser` 需要本机安装 Chrome 或 Edge。找不到时可设置 `CHROME_PATH` 指向浏览器可执行文件。
+>
+> 这些验证是桌面 Chromium 的 iPhone 尺寸模拟，**不是**真实 iPhone/Safari 验证。
+
+## 手动发布到 GitHub Pages
+
+本项目刻意**不监听 `push`**。推送代码不会自动发布，只有在 GitHub Actions 页面手动点击运行才会部署。
+
+首次配置：
+
+1. 打开仓库 **Settings → Pages**。
+2. 在 **Build and deployment → Source** 中选择 **GitHub Actions**。
+3. 打开 **Actions → Deploy to GitHub Pages**。
+4. 点击右侧 **Run workflow**，选择 `main` 分支并运行。
+5. 等待 `build` 和 `deploy` 两个 job 完成，访问 <https://gongtp.github.io/readnook/>。
+
+工作流文件：`.github/workflows/deploy.yml`
+
+- 触发条件只有 `workflow_dispatch`。
+- 使用官方 `actions/configure-pages`、`actions/upload-pages-artifact`、`actions/deploy-pages`。
+- 构建前执行 `npm ci` 和 `npm run check`，校验不通过不会发布。
+- 不需要任何自定义 secret。
+
+部署路径固定为 `/readnook/`。如果以后仓库改名或部署到根路径，可在构建时覆盖基础路径：
+
+```bash
+BASE_PATH=/new-path/ npm run build
+```
+
+同时需要同步修改 README 和 `.github/workflows/deploy.yml` 中的说明，并确保 `vite.config.ts` 的 manifest 路径随之生成。
+
+## iPhone 安装
+
+1. 用 Safari 打开 <https://gongtp.github.io/readnook/>。
+2. 等待首次加载完成，让 Service Worker 缓存应用资源。
+3. 点击 Safari 的“分享”按钮。
+4. 选择“添加到主屏幕”。
+5. 从主屏幕图标启动 ReadNook。
+
+建议**只在主屏幕应用中导入小说**。iOS 上 Safari 标签页和主屏幕应用可能使用不同的存储容器，混用会导致看不到同一份书架。
+
+## 使用说明
+
+### 导入
+
+1. 在书架点击“导入”。
+2. 选择 `.txt` 文件，等待编码检测和正文预览。
+3. 核对中文是否正常；如出现乱码，手动切换 UTF-8 / GBK / GB18030。
+4. 可修改书名，点击“导入并开始阅读”。
+
+限制：
+
+- 单文件最大 **30 MB**。
+- 不支持 UTF-16、EPUB、MOBI、AZW3。
+- 同一内容（SHA-256 相同）只会导入一次；重复导入会提示并链接到已有书籍。
+
+### 章节
+
+- 识别“第一章”“第1章”“第十二回”“序章”“楔子”“番外一”“后记”等常见标题。
+- 第一个标题前的非空正文保存为“开篇”。
+- 没有识别到标题时，正文按约 8000 字分段，标题为“正文 1”“正文 2”……
+- 单个超长章节也会分段，标题追加“（续 2）”，阅读器显示“自动分段”标记。
+- 原始 TXT 始终完整保存，自动分段不会修改原文件。
+
+### 阅读
+
+- 纵向滚动；底部工具栏可切换上一章/下一章、加书签、调整阅读外观。
+- 顶部目录可跳转章节；书签面板可跳转或删除书签。
+- 字号 17–26 px，行距 1.50–2.20，页面边距 16–32 px。
+- 主题：米白、护眼、深色。设置自动保存，刷新/重新打开后保持。
+- 阅读位置按章节 key 和字符偏移恢复；若章节结构变化，会回到第一章并给出提示。
+
+## 数据、存储与备份
+
+### 本地数据
+
+- 数据库：IndexedDB `ReadNookDB`（Dexie schema version 1）。
+- 表：`books`、`files`、`chapters`、`chapterContents`、`progress`、`bookmarks`、`settings`。
+- 原文以 `Blob` 保存在 `files` 表；章节元数据和正文分表存储，避免加载整本书的正文。
+- 主题镜像写入 `localStorage` 的 `readnook.theme`，仅用于首屏避免闪烁；权威设置仍在 IndexedDB。
+- 清除网站数据、卸载 PWA、系统回收空间都可能导致数据丢失。可在设置页申请持久存储，但浏览器不保证一定授予。
+- iOS 的文件/存储行为受系统版本、剩余空间和“网站数据”设置影响，建议定期导出备份。
+
+### 备份格式
+
+备份是普通 ZIP，不加密，包含：
+
+```
+manifest.json
+books/<book-id>/original.txt
+...
+```
+
+`manifest.json` 记录书籍元数据、原始文件大小和 SHA-256、阅读进度、书签和阅读设置。恢复时会：
+
+1. 校验 ZIP 路径，忽略无关条目和路径穿越条目。
+2. 校验 manifest 字段、数量、安全 ID、路径和大小限制。
+3. 重新解析原始 TXT（章节不直接写入备份，避免格式漂移）。
+4. 恢复前校验所有待恢复原文件的 SHA-256。
+5. 按内容摘要跳过现有书库和备份内部的重复书籍。
+6. 每本书在独立事务中写入；单本失败不会破坏已有书库。
+
+恢复不会清空或覆盖现有书库。备份中的阅读设置只有在没有单本失败时才会恢复（可在确认框中取消勾选）。
+
+## 项目结构
+
+```
+src/
+  components/       通用组件、对话框、图标、PWA 更新提示
+  config/           应用常量、限制、版本
+  db/               Dexie schema 与仓储（书库、设置、备份快照）
+  domain/           编码检测、章节解析、进度计算、备份校验、阅读设置
+  router/           Hash 路由
+  services/         导入、Worker 客户端、进度保存、备份、存储容量
+  stores/           Pinia：应用初始化、书架、阅读设置、Toast
+  styles/           CSS 变量、基础样式、视图与阅读器样式
+  types/            数据模型与 Worker/备份协议
+  utils/            哈希、ID、格式化、错误、DOM 定位
+  views/            书架、导入、阅读器、设置
+  workers/          TXT Worker
+tests/              单元与 IndexedDB 集成测试、TXT fixture
+scripts/            构建校验、浏览器冒烟测试、图标生成
+public/icons/       PWA 与 Apple 图标
+.github/workflows/  手动触发的 Pages 部署
+```
+
+## 已知限制
+
+- 第一版仅 TXT；不支持 EPUB/MOBI/AZW3、图文混排或 DRM 文件。
+- 没有账号、云同步、跨设备同步、在线书源、阅读统计或社交功能。
+- 没有书内全文搜索、分页翻页模式、听书、批注和多设备同步。
+- 备份未加密；请把 ZIP 保存到可信位置。
+- 编码检测是启发式的。UTF-8 严格解码失败后回退到 GB18030；极短或特殊文本可能需要手动切换编码。
+- 30 MB 上限和全量 SHA-256 是为了控制 iPhone 内存与导入时间；更大的书需要先拆分。
+- 自动分段只根据字符数和换行，不保证与作者原始分卷完全一致。
+- 章节标题不可在应用内编辑；重新导入是当前唯一的修正方式。
+- 备份恢复是“逐本原子”而非“整包原子”：若多本书中某本失败，已成功的书会保留，失败书不会留下半条记录。
+- 备份 ZIP 的压缩/解压目前在主线程完成；书库很大时，导出或恢复期间界面可能短暂停顿。导入解析和 SHA-256 已在 Worker 中执行。
+- 未在真实 iPhone 上验收；目前只完成桌面 Chromium 的 390×844 移动视口测试。
+- 建议 iOS 16.4+（`<dialog>`、`dvh`、`color-mix()` 等特性）；更旧版本未验证。
+
+## iPhone 手动验收清单
+
+发布后在真实 iPhone/Safari 上逐项确认：
+
+- [ ] 用 Safari 打开线上地址，确认首屏无白屏、无横向滚动。
+- [ ] 分享 → 添加到主屏幕，从图标启动，确认顶部/底部不被刘海或 Home 指示条遮挡。
+- [ ] 导入一本 UTF-8 TXT，核对预览、书名和章节。
+- [ ] 导入一本 GBK/GB18030 TXT，确认自动检测；手动切换编码后预览正确。
+- [ ] 导入无章节标题的超长 TXT，确认自动分段标记和原文完整。
+- [ ] 滚动阅读，锁屏/切后台再回来，确认阅读位置和进度保存。
+- [ ] 完全关闭应用后重新打开，确认回到原章节和大致位置。
+- [ ] 添加书签、从书签跳转、删除书签。
+- [ ] 切换三套主题、字号、行距、页边距，确认刷新后保持。
+- [ ] 设置页导出备份，使用系统分享面板“存储到文件”。
+- [ ] 删除一本书，再从备份恢复，确认书籍、进度、书签和设置回来。
+- [ ] 同一备份再次恢复，确认重复书籍被跳过且书库不变。
+- [ ] 开启飞行模式，刷新应用，确认已缓存的应用和书库仍可打开。
+- [ ] 飞行模式下再导入一本新 TXT，确认可阅读。
+- [ ] 发布新版本后重新打开，确认出现更新提示；点击更新后书库仍保留。
+
+## 故障排查
+
+**Pages 打开是 404**
+
+- 确认 Settings → Pages 的 Source 是 GitHub Actions。
+- 确认手动运行过 `Deploy to GitHub Pages`，且 `deploy` job 成功。
+- 确认访问路径带尾斜杠：`/readnook/`。
+
+**页面能打开但资源 404**
+
+- 检查构建是否使用 `/readnook/` 基础路径；运行 `npm run verify:build`。
+- 如果仓库改名，按上面的 `BASE_PATH` 重新构建和部署。
+
+**更新后仍是旧界面**
+
+- 在更新提示中点击“更新”；或完全关闭主屏幕应用后重新打开。
+- 不要通过清除网站数据来更新，这会删除本地书库。先导出备份。
+
+**导入后乱码**
+
+- 在预览页手动切换编码。GBK 文件常被误判为 GB18030，两者通常兼容；若仍乱码，尝试另一位。
+- 确认文件不是 UTF-16；当前版本会明确拒绝 UTF-16。
+
+**存储空间不足**
+
+- 设置页查看已用/配额。
+- 先导出完整备份，再删除不需要的书。
+- iOS 可能回收长期未使用站点的存储；申请持久存储并定期备份。
+
+**备份无法恢复**
+
+- 确认文件是 ReadNook 导出的 `.zip`，不是重命名后的其他压缩包。
+- 恢复前会校验原文件 SHA-256；文件被修改过会中止，现有书库不受影响。
+- 备份不加密但也不含应用代码；换浏览器/设备后需要重新导入或恢复。
+
+## 隐私
+
+ReadNook 不包含统计、广告、远程字体、远程图片或第三方脚本。除了加载应用自身静态资源和可选的 Service Worker 更新检查外，不会主动发起网络请求。小说内容、书名、进度和书签不会离开设备，除非你主动导出并分享备份。
