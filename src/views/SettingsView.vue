@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import BaseDialog from '@/components/BaseDialog.vue'
+import BrandMark from '@/components/BrandMark.vue'
 import ReaderSettingsPanel from '@/components/ReaderSettingsPanel.vue'
 import { APP_VERSION } from '@/config/app'
 import {
@@ -72,6 +73,25 @@ const backupSummaryTime = computed(() => {
   if (!createdAt) return ''
   const timestamp = Date.parse(createdAt)
   return Number.isNaN(timestamp) ? createdAt : formatDateTime(timestamp)
+})
+
+const themeNames = {
+  paper: '米白',
+  sepia: '护眼',
+  dark: '深色',
+} as const
+
+const appearanceSummary = computed(
+  () =>
+    `${themeNames[settingsStore.settings.theme]} · ${settingsStore.settings.fontSize} px`,
+)
+
+const storageSummary = computed(() => {
+  const status = storageStatus.value
+  if (!status) return '读取中'
+  if (!status.supported) return '不可用'
+  if (status.usage === null || status.usage === undefined) return '已启用'
+  return `${formatBytes(status.usage)} 已用`
 })
 
 async function refreshStorage(): Promise<void> {
@@ -309,12 +329,11 @@ onBeforeUnmount(() => {
 
 <template>
   <main id="main-content" class="page settings-page">
-    <header class="profile-card">
-      <div class="profile-card__avatar" aria-hidden="true">R</div>
-      <div class="profile-card__copy">
-        <p class="eyebrow">私人书房</p>
-        <h1>我的 ReadNook</h1>
-        <p>无账号、无上传，只读本机上的书。</p>
+    <header class="profile-header">
+      <BrandMark :size="46" />
+      <div class="profile-header__copy">
+        <h1>设置</h1>
+        <p>ReadNook · 离线阅读程序</p>
       </div>
       <span class="local-badge">
         <AppIcon name="shield" :size="13" />
@@ -322,273 +341,381 @@ onBeforeUnmount(() => {
       </span>
     </header>
 
-    <p class="settings-intro">
-      管理阅读偏好、本机存储和完整备份。
-    </p>
-
-    <section class="panel" aria-labelledby="appearance-heading">
-      <div class="panel__head">
-        <div>
-          <p class="eyebrow">阅读体验</p>
-          <h2 id="appearance-heading">外观</h2>
-        </div>
-      </div>
-      <ReaderSettingsPanel />
-    </section>
-
-    <section class="panel" aria-labelledby="demo-heading">
-      <div class="panel__head">
-        <div>
-          <p class="eyebrow">界面预览</p>
-          <h2 id="demo-heading">演示书籍</h2>
-        </div>
-        <span class="status-pill">仅本机</span>
-      </div>
-      <p class="muted">
-        生成 30 本带不同阅读进度的短篇示例书，用来查看书架筛选、分页和继续阅读效果。示例书只写入当前浏览器，可随时清除。
-      </p>
-      <div class="button-row">
-        <button
-          type="button"
-          class="button button--primary"
-          :disabled="demoBusy || restoreBusy || exportBusy"
-          @click="addDemoBooks"
-        >
-          <AppIcon name="plus" :size="18" />
-          {{ demoBusy ? demoStage || '正在生成…' : '生成 30 本示例书' }}
-        </button>
-        <button
-          type="button"
-          class="button"
-          :disabled="demoBusy || restoreBusy || exportBusy"
-          @click="demoClearDialogOpen = true"
-        >
-          <AppIcon name="trash" :size="17" />
-          清除示例书
-        </button>
-      </div>
-      <p class="field__hint">
-        示例书按 12 本一批显示，回到书架后点击“显示更多”即可看到下一页。
-      </p>
-    </section>
-
-    <section class="panel" aria-labelledby="storage-heading">
-      <div class="panel__head">
-        <div>
-          <p class="eyebrow">本机数据</p>
-          <h2 id="storage-heading">存储空间</h2>
-        </div>
-        <button
-          type="button"
-          class="icon-button icon-button--quiet"
-          aria-label="刷新存储信息"
-          :disabled="storageLoading"
-          @click="refreshStorage"
-        >
-          <AppIcon name="refresh" :size="18" />
-        </button>
-      </div>
-
-      <div v-if="storageLoading && !storageStatus" class="inline-loader">
-        <span class="spinner" aria-hidden="true" />
-        正在读取用量…
-      </div>
-      <template v-else-if="storageStatus">
-        <template v-if="storageStatus.supported">
-          <dl class="data-list">
-            <div>
-              <dt>已使用</dt>
-              <dd>{{ storageStatus.usage !== null ? formatBytes(storageStatus.usage) : '未知' }}</dd>
-            </div>
-            <div>
-              <dt>浏览器配额</dt>
-              <dd>{{ storageStatus.quota !== null ? formatBytes(storageStatus.quota) : '未知' }}</dd>
-            </div>
-            <div>
-              <dt>持久存储</dt>
-              <dd>{{ persistenceLabel }}</dd>
-            </div>
-          </dl>
-          <div v-if="usagePercent !== null" class="storage-meter" aria-hidden="true">
-            <span :style="{ width: `${usagePercent}%` }" />
-          </div>
-          <button
-            v-if="storageStatus.persistenceSupported && storageStatus.persisted !== true"
-            type="button"
-            class="button button--small"
-            :disabled="requestingPersistence"
-            @click="requestPersistence"
-          >
-            {{ requestingPersistence ? '正在申请…' : '申请持久存储' }}
-          </button>
-        </template>
-        <p v-else class="muted">
-          当前浏览器没有提供存储用量接口。你仍可正常导入和阅读，但请定期备份。
-        </p>
-      </template>
-
-      <div class="notice notice--info">
-        <AppIcon name="shield" :size="19" />
-        <span>
-          书籍、原文和进度仅保存在当前浏览器的 IndexedDB（ReadNookDB）中。清除网站数据、卸载应用或系统回收空间都可能造成数据丢失。Safari 标签页和主屏幕应用也不一定共享同一份本地数据。
-        </span>
-      </div>
-    </section>
-
-    <section class="panel" aria-labelledby="backup-heading">
-      <div class="panel__head">
-        <div>
-          <p class="eyebrow">完整迁移</p>
-          <h2 id="backup-heading">备份与恢复</h2>
-        </div>
-        <span class="status-pill">ZIP + JSON</span>
-      </div>
-
-      <p class="muted">
-        备份包含小说原文、书名、阅读进度、书签和阅读设置，不包含应用代码。备份文件不受 ReadNook 服务器管理，也不会自动上传。
-      </p>
-
-      <div class="button-row">
-        <button
-          type="button"
-          class="button button--primary"
-          :disabled="exportBusy || restoreBusy"
-          @click="exportBackup"
-        >
-          <AppIcon name="download" :size="18" />
-          {{ exportBusy ? '正在生成…' : '导出完整备份' }}
-        </button>
-        <label class="button" :class="{ 'is-disabled': restoreBusy }">
-          <AppIcon name="upload" :size="18" />
-          {{ restoreBusy ? restoreStage || '正在校验…' : '从备份恢复' }}
-          <input
-            class="sr-only"
-            type="file"
-            accept=".zip,application/zip"
-            :disabled="restoreBusy"
-            @change="handleRestoreInput"
+    <div class="settings-groups">
+      <details class="settings-group" aria-labelledby="appearance-heading">
+        <summary class="settings-group__summary">
+          <span class="settings-group__icon" aria-hidden="true">
+            <AppIcon name="type" :size="18" />
+          </span>
+          <span class="settings-group__copy">
+            <span
+              id="appearance-heading"
+              class="settings-group__title"
+              role="heading"
+              aria-level="2"
+            >
+              外观
+            </span>
+            <span class="settings-group__hint">主题、字号、行距、页边距</span>
+          </span>
+          <span class="settings-group__value">{{ appearanceSummary }}</span>
+          <AppIcon
+            class="settings-group__chevron"
+            name="chevron-right"
+            :size="16"
           />
-        </label>
-      </div>
+        </summary>
+        <div class="settings-group__body">
+          <ReaderSettingsPanel />
+        </div>
+      </details>
 
-      <div v-if="exportBusy" class="inline-loader" role="status">
-        <span class="spinner" aria-hidden="true" />
-        {{ exportStage || '正在准备备份…' }}
-      </div>
-      <p v-if="exportError" class="notice notice--error" role="alert">
-        <AppIcon name="alert" :size="19" />
-        <span>{{ exportError }}</span>
-      </p>
-      <div v-if="restoreBusy && !exportBusy" class="inline-loader" role="status">
-        <span class="spinner" aria-hidden="true" />
-        {{ restoreStage || '正在处理备份…' }}
-      </div>
-
-      <div v-if="exportResult" class="backup-result" aria-live="polite">
-        <div>
-          <strong>备份已生成</strong>
-          <p>
-            {{ exportResult.fileName }} ·
-            {{ formatBytes(exportResult.blob.size) }} ·
-            {{ exportResult.manifest.bookCount }} 本书
+      <details class="settings-group" aria-labelledby="demo-heading">
+        <summary class="settings-group__summary">
+          <span class="settings-group__icon" aria-hidden="true">
+            <AppIcon name="book" :size="18" />
+          </span>
+          <span class="settings-group__copy">
+            <span
+              id="demo-heading"
+              class="settings-group__title"
+              role="heading"
+              aria-level="2"
+            >
+              演示书籍
+            </span>
+            <span class="settings-group__hint">生成示例书，预览书架效果</span>
+          </span>
+          <span class="settings-group__value">30 本</span>
+          <AppIcon
+            class="settings-group__chevron"
+            name="chevron-right"
+            :size="16"
+          />
+        </summary>
+        <div class="settings-group__body">
+          <p class="settings-body-text">
+            生成 30 本带不同阅读进度的短篇示例书，用来查看书架筛选、分页和继续阅读效果。示例书只写入当前浏览器，可随时清除。
+          </p>
+          <div class="button-row">
+            <button
+              type="button"
+              class="button button--primary"
+              :disabled="demoBusy || restoreBusy || exportBusy"
+              @click="addDemoBooks"
+            >
+              <AppIcon name="plus" :size="18" />
+              {{ demoBusy ? demoStage || '正在生成…' : '生成 30 本示例书' }}
+            </button>
+            <button
+              type="button"
+              class="button"
+              :disabled="demoBusy || restoreBusy || exportBusy"
+              @click="demoClearDialogOpen = true"
+            >
+              <AppIcon name="trash" :size="17" />
+              清除示例书
+            </button>
+          </div>
+          <p class="field__hint">
+            示例书按 12 本一批显示，回到书架后继续下滑会自动加载下一页。
           </p>
         </div>
-        <div class="button-row">
-          <button
-            v-if="shareSupported"
-            type="button"
-            class="button button--primary button--small"
-            @click="shareBackup"
+      </details>
+
+      <details class="settings-group" aria-labelledby="storage-heading">
+        <summary class="settings-group__summary">
+          <span class="settings-group__icon" aria-hidden="true">
+            <AppIcon name="shield" :size="18" />
+          </span>
+          <span class="settings-group__copy">
+            <span
+              id="storage-heading"
+              class="settings-group__title"
+              role="heading"
+              aria-level="2"
+            >
+              存储空间
+            </span>
+            <span class="settings-group__hint">用量、持久存储与数据说明</span>
+          </span>
+          <span class="settings-group__value">{{ storageSummary }}</span>
+          <AppIcon
+            class="settings-group__chevron"
+            name="chevron-right"
+            :size="16"
+          />
+        </summary>
+        <div class="settings-group__body">
+          <div class="settings-inline-actions">
+            <button
+              type="button"
+              class="settings-refresh"
+              :disabled="storageLoading"
+              @click="refreshStorage"
+            >
+              <AppIcon name="refresh" :size="15" />
+              {{ storageLoading ? '刷新中…' : '刷新' }}
+            </button>
+          </div>
+
+          <div v-if="storageLoading && !storageStatus" class="inline-loader">
+            <span class="spinner" aria-hidden="true" />
+            正在读取用量…
+          </div>
+          <template v-else-if="storageStatus">
+            <template v-if="storageStatus.supported">
+              <dl class="data-list">
+                <div>
+                  <dt>已使用</dt>
+                  <dd>{{ storageStatus.usage !== null ? formatBytes(storageStatus.usage) : '未知' }}</dd>
+                </div>
+                <div>
+                  <dt>浏览器配额</dt>
+                  <dd>{{ storageStatus.quota !== null ? formatBytes(storageStatus.quota) : '未知' }}</dd>
+                </div>
+                <div>
+                  <dt>持久存储</dt>
+                  <dd>{{ persistenceLabel }}</dd>
+                </div>
+              </dl>
+              <div v-if="usagePercent !== null" class="storage-meter" aria-hidden="true">
+                <span :style="{ width: `${usagePercent}%` }" />
+              </div>
+              <button
+                v-if="storageStatus.persistenceSupported && storageStatus.persisted !== true"
+                type="button"
+                class="button button--small"
+                :disabled="requestingPersistence"
+                @click="requestPersistence"
+              >
+                {{ requestingPersistence ? '正在申请…' : '申请持久存储' }}
+              </button>
+            </template>
+            <p v-else class="settings-body-text">
+              当前浏览器没有提供存储用量接口。你仍可正常导入和阅读，但请定期备份。
+            </p>
+          </template>
+
+          <div class="notice notice--info">
+            <AppIcon name="shield" :size="19" />
+            <span>
+              书籍、原文和进度仅保存在当前浏览器的 IndexedDB（ReadNookDB）中。清除网站数据、卸载应用或系统回收空间都可能造成数据丢失。Safari 标签页和主屏幕应用也不一定共享同一份本地数据。
+            </span>
+          </div>
+        </div>
+      </details>
+
+      <details class="settings-group" aria-labelledby="backup-heading">
+        <summary class="settings-group__summary">
+          <span class="settings-group__icon" aria-hidden="true">
+            <AppIcon name="download" :size="18" />
+          </span>
+          <span class="settings-group__copy">
+            <span
+              id="backup-heading"
+              class="settings-group__title"
+              role="heading"
+              aria-level="2"
+            >
+              备份与恢复
+            </span>
+            <span class="settings-group__hint">导出或恢复完整 ZIP 备份</span>
+          </span>
+          <span class="settings-group__value">ZIP + JSON</span>
+          <AppIcon
+            class="settings-group__chevron"
+            name="chevron-right"
+            :size="16"
+          />
+        </summary>
+        <div class="settings-group__body">
+          <p class="settings-body-text">
+            备份包含小说原文、书名、阅读进度、书签和阅读设置，不包含应用代码。备份文件不受 ReadNook 服务器管理，也不会自动上传。
+          </p>
+
+          <div class="button-row">
+            <button
+              type="button"
+              class="button button--primary"
+              :disabled="exportBusy || restoreBusy"
+              @click="exportBackup"
+            >
+              <AppIcon name="download" :size="18" />
+              {{ exportBusy ? '正在生成…' : '导出完整备份' }}
+            </button>
+            <label class="button" :class="{ 'is-disabled': restoreBusy }">
+              <AppIcon name="upload" :size="18" />
+              {{ restoreBusy ? restoreStage || '正在校验…' : '从备份恢复' }}
+              <input
+                class="sr-only"
+                type="file"
+                accept=".zip,application/zip"
+                :disabled="restoreBusy"
+                @change="handleRestoreInput"
+              />
+            </label>
+          </div>
+
+          <div v-if="exportBusy" class="inline-loader" role="status">
+            <span class="spinner" aria-hidden="true" />
+            {{ exportStage || '正在准备备份…' }}
+          </div>
+          <p v-if="exportError" class="notice notice--error" role="alert">
+            <AppIcon name="alert" :size="19" />
+            <span>{{ exportError }}</span>
+          </p>
+          <div v-if="restoreBusy && !exportBusy" class="inline-loader" role="status">
+            <span class="spinner" aria-hidden="true" />
+            {{ restoreStage || '正在处理备份…' }}
+          </div>
+
+          <div v-if="exportResult" class="backup-result" aria-live="polite">
+            <div class="backup-result__head">
+              <strong>备份已生成</strong>
+              <span>
+                {{ formatBytes(exportResult.blob.size) }} ·
+                {{ exportResult.manifest.bookCount }} 本书
+              </span>
+            </div>
+            <p class="backup-result__file">{{ exportResult.fileName }}</p>
+            <div class="button-row">
+              <button
+                v-if="shareSupported"
+                type="button"
+                class="button button--primary button--small"
+                @click="shareBackup"
+              >
+                <AppIcon name="share" :size="17" />
+                保存/分享到“文件”
+              </button>
+              <button type="button" class="button button--small" @click="downloadBackup">
+                <AppIcon name="download" :size="17" />
+                下载备份
+              </button>
+            </div>
+            <p class="field__hint">
+              iPhone 若无下载反应，请使用“保存/分享到文件”，在系统分享面板中选择“存储到文件”。
+            </p>
+          </div>
+
+          <div class="notice notice--info">
+            <AppIcon name="alert" :size="19" />
+            <span>
+              备份是普通 ZIP 文件，不加密。恢复时按内容摘要跳过重复书籍，不会清空或覆盖现有书库；校验或写入失败不会破坏已有书籍。
+            </span>
+          </div>
+
+          <section
+            v-if="restoreSummary"
+            class="restore-result"
+            aria-labelledby="restore-result-heading"
           >
-            <AppIcon name="share" :size="17" />
-            保存/分享到“文件”
-          </button>
-          <button type="button" class="button button--small" @click="downloadBackup">
-            <AppIcon name="download" :size="17" />
-            下载备份
-          </button>
+            <div class="restore-result__head">
+              <h3 id="restore-result-heading">本次恢复</h3>
+              <AppIcon name="check" :size="20" />
+            </div>
+            <dl class="data-list">
+              <div>
+                <dt>新增书籍</dt>
+                <dd>{{ restoreSummary.restoredBooks }} 本</dd>
+              </div>
+              <div>
+                <dt>跳过重复</dt>
+                <dd>{{ restoreSummary.skippedDuplicates }} 本</dd>
+              </div>
+              <div>
+                <dt>跳过书签</dt>
+                <dd>{{ restoreSummary.skippedBookmarks }} 个</dd>
+              </div>
+              <div>
+                <dt>阅读设置</dt>
+                <dd>{{ restoreSummary.settingsRestored ? '已恢复' : '未恢复' }}</dd>
+              </div>
+            </dl>
+            <ul v-if="restoreSummary.warnings.length" class="warning-list">
+              <li v-for="warning in restoreSummary.warnings" :key="warning">
+                {{ warning }}
+              </li>
+            </ul>
+            <ul
+              v-if="restoreSummary.failures.length"
+              class="warning-list warning-list--error"
+            >
+              <li v-for="failure in restoreSummary.failures" :key="failure">
+                {{ failure }}
+              </li>
+            </ul>
+          </section>
         </div>
-        <p class="field__hint">
-          iPhone 若无下载反应，请使用“保存/分享到文件”，在系统分享面板中选择“存储到文件”。
-        </p>
-      </div>
+      </details>
 
-      <div class="notice notice--info">
-        <AppIcon name="alert" :size="19" />
-        <span>
-          备份是普通 ZIP 文件，不加密。恢复时按内容摘要跳过重复书籍，不会清空或覆盖现有书库；校验或写入失败不会破坏已有书籍。
-        </span>
-      </div>
-    </section>
+      <details class="settings-group" aria-labelledby="install-heading">
+        <summary class="settings-group__summary">
+          <span class="settings-group__icon" aria-hidden="true">
+            <AppIcon name="share" :size="18" />
+          </span>
+          <span class="settings-group__copy">
+            <span
+              id="install-heading"
+              class="settings-group__title"
+              role="heading"
+              aria-level="2"
+            >
+              添加到主屏幕
+            </span>
+            <span class="settings-group__hint">iPhone Safari 安装步骤</span>
+          </span>
+          <span class="settings-group__value">Safari</span>
+          <AppIcon
+            class="settings-group__chevron"
+            name="chevron-right"
+            :size="16"
+          />
+        </summary>
+        <div class="settings-group__body">
+          <ol class="instruction-list">
+            <li>用 Safari 打开 <strong>gongtp.github.io/readnook/</strong>。</li>
+            <li>点击 Safari 工具栏的“分享”按钮。</li>
+            <li>选择“添加到主屏幕”，再从主屏幕图标启动 ReadNook。</li>
+            <li>建议从主屏幕应用内导入小说，以获得更稳定的独立存储空间。</li>
+          </ol>
+          <p class="settings-body-text">
+            第一次联网打开并等待离线缓存完成后，ReadNook 才能断网启动。应用会在发现新版本时提示，而不会在阅读过程中自动刷新。
+          </p>
+        </div>
+      </details>
 
-    <section v-if="restoreSummary" class="panel" aria-labelledby="restore-result-heading">
-      <div class="panel__head">
-        <div>
-          <p class="eyebrow">恢复结果</p>
-          <h2 id="restore-result-heading">本次恢复</h2>
+      <details class="settings-group" aria-labelledby="about-heading">
+        <summary class="settings-group__summary">
+          <span class="settings-group__icon" aria-hidden="true">
+            <AppIcon name="book" :size="18" />
+          </span>
+          <span class="settings-group__copy">
+            <span
+              id="about-heading"
+              class="settings-group__title"
+              role="heading"
+              aria-level="2"
+            >
+              关于 ReadNook
+            </span>
+            <span class="settings-group__hint">版本与数据说明</span>
+          </span>
+          <span class="settings-group__value">v{{ APP_VERSION }}</span>
+          <AppIcon
+            class="settings-group__chevron"
+            name="chevron-right"
+            :size="16"
+          />
+        </summary>
+        <div class="settings-group__body">
+          <p class="settings-body-text">
+            私人、本地优先的 TXT 小说阅读器。第一版仅支持 TXT，不提供账号、云同步、在线书源或付费功能。阅读位置按“章节标识 + 章节内字符偏移”保存。
+          </p>
         </div>
-        <AppIcon name="check" :size="22" />
-      </div>
-      <dl class="data-list">
-        <div>
-          <dt>新增书籍</dt>
-          <dd>{{ restoreSummary.restoredBooks }} 本</dd>
-        </div>
-        <div>
-          <dt>跳过重复</dt>
-          <dd>{{ restoreSummary.skippedDuplicates }} 本</dd>
-        </div>
-        <div>
-          <dt>跳过书签</dt>
-          <dd>{{ restoreSummary.skippedBookmarks }} 个</dd>
-        </div>
-        <div>
-          <dt>阅读设置</dt>
-          <dd>{{ restoreSummary.settingsRestored ? '已恢复' : '未恢复' }}</dd>
-        </div>
-      </dl>
-      <ul v-if="restoreSummary.warnings.length" class="warning-list">
-        <li v-for="warning in restoreSummary.warnings" :key="warning">
-          {{ warning }}
-        </li>
-      </ul>
-      <ul v-if="restoreSummary.failures.length" class="warning-list warning-list--error">
-        <li v-for="failure in restoreSummary.failures" :key="failure">
-          {{ failure }}
-        </li>
-      </ul>
-    </section>
-
-    <section class="panel" aria-labelledby="install-heading">
-      <div class="panel__head">
-        <div>
-          <p class="eyebrow">iPhone</p>
-          <h2 id="install-heading">添加到主屏幕</h2>
-        </div>
-        <AppIcon name="share" :size="21" />
-      </div>
-      <ol class="instruction-list">
-        <li>用 Safari 打开 <strong>gongtp.github.io/readnook/</strong>。</li>
-        <li>点击 Safari 工具栏的“分享”按钮。</li>
-        <li>选择“添加到主屏幕”，再从主屏幕图标启动 ReadNook。</li>
-        <li>建议从主屏幕应用内导入小说，以获得更稳定的独立存储空间。</li>
-      </ol>
-      <p class="muted">
-        第一次联网打开并等待离线缓存完成后，ReadNook 才能断网启动。应用会在发现新版本时提示，而不会在阅读过程中自动刷新。
-      </p>
-    </section>
-
-    <section class="panel" aria-labelledby="about-heading">
-      <div class="panel__head">
-        <div>
-          <p class="eyebrow">关于</p>
-          <h2 id="about-heading">ReadNook {{ APP_VERSION }}</h2>
-        </div>
-      </div>
-      <p class="muted">
-        私人、本地优先的 TXT 小说阅读器。第一版仅支持 TXT，不提供账号、云同步、在线书源或付费功能。阅读位置按“章节标识 + 章节内字符偏移”保存。
-      </p>
-    </section>
+      </details>
+    </div>
 
     <BaseDialog
       v-model:open="restoreDialogOpen"

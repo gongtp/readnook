@@ -144,7 +144,7 @@ a:hover {
   padding: 5px max(8px, var(--safe-right)) calc(5px + var(--safe-bottom))
     max(8px, var(--safe-left));
   border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-elevated), transparent 7%);
+  background: var(--bg-elevated);
   box-shadow: 0 -10px 34px rgba(51, 36, 21, 0.07);
   backdrop-filter: blur(18px) saturate(1.08);
   -webkit-backdrop-filter: blur(18px) saturate(1.08);
@@ -922,19 +922,8 @@ input[type="checkbox"] {
   text-align: center;
 }
 
-.app-boot__mark {
-  display: grid;
-  width: 68px;
-  height: 68px;
-  margin: 0 auto 14px;
-  place-items: center;
-  border-radius: 22px;
-  background: var(--accent);
-  color: var(--accent-contrast);
-  font-family: var(--font-reading);
-  font-size: 34px;
-  font-weight: 600;
-  box-shadow: var(--shadow-soft);
+.app-boot__brand {
+  margin: 0 auto 16px;
 }
 
 .app-boot__name {

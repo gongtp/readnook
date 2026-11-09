@@ -5,7 +5,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import BaseDialog from '@/components/BaseDialog.vue'
 import BookCover from '@/components/BookCover.vue'
 import InstallHint from '@/components/InstallHint.vue'
-import { useLibraryStore } from '@/stores/library'
+import { useLibraryStore, type ShelfItem } from '@/stores/library'
 import { useToastStore } from '@/stores/toast'
 import type { Book } from '@/types/models'
 import {
@@ -36,17 +36,26 @@ const deleteTarget = ref<Book | null>(null)
 const deleting = ref(false)
 const shelfFilter = ref<ShelfFilter>('all')
 const viewMode = ref<ShelfView>('grid')
+const manageMode = ref(false)
 const pageSize = 12
 const visibleLimit = ref(pageSize)
 const loadMoreSentinel = ref<HTMLElement | null>(null)
+const autoLoadMargin = 320
+let autoLoadAllowed = false
+let lastScrollY = 0
 const loadMoreObserver =
   typeof IntersectionObserver === 'undefined'
     ? null
     : new IntersectionObserver(
         (entries) => {
-          if (entries.some((entry) => entry.isIntersecting)) loadMore()
+          if (
+            autoLoadAllowed &&
+            entries.some((entry) => entry.isIntersecting)
+          ) {
+            loadMore()
+          }
         },
-        { rootMargin: '320px 0px' },
+        { rootMargin: `${autoLoadMargin}px 0px` },
       )
 
 const readingCount = computed(
@@ -144,6 +153,8 @@ const resumeActionLabel = computed(() => {
 })
 
 watch([search, sort, shelfFilter], () => {
+  autoLoadAllowed = false
+  manageMode.value = false
   visibleLimit.value = pageSize
 })
 
@@ -157,12 +168,34 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  window.removeEventListener('scroll', handleShelfScroll)
   loadMoreObserver?.disconnect()
 })
 
 function loadMore(): void {
   if (!hasMoreEntries.value) return
+  autoLoadAllowed = false
   visibleLimit.value += pageSize
+}
+
+function handleShelfScroll(): void {
+  const currentScrollY = window.scrollY
+  if (currentScrollY <= lastScrollY) {
+    lastScrollY = currentScrollY
+    return
+  }
+  lastScrollY = currentScrollY
+  if (autoLoadAllowed) return
+
+  autoLoadAllowed = true
+  const sentinel = loadMoreSentinel.value
+  if (
+    sentinel &&
+    sentinel.getBoundingClientRect().top <=
+      window.innerHeight + autoLoadMargin
+  ) {
+    loadMore()
+  }
 }
 
 function requestDelete(book: Book): void {
@@ -195,7 +228,23 @@ function clearSearch(): void {
   search.value = ''
 }
 
+function chapterLabel(entry: ShelfItem): string {
+  if (entry.percent <= 0) return `共 ${entry.book.chapterCount} 章`
+  return formatChapterLocation(
+    entry.progress?.chapterIndex ?? 0,
+    entry.book.chapterCount,
+  )
+}
+
+function progressLabel(entry: ShelfItem): string {
+  if (entry.percent >= 100) return '已读完'
+  if (entry.percent > 0) return `已读 ${entry.percent}%`
+  return '未开始'
+}
+
 onMounted(() => {
+  lastScrollY = window.scrollY
+  window.addEventListener('scroll', handleShelfScroll, { passive: true })
   void library.load()
 })
 </script>
@@ -203,12 +252,15 @@ onMounted(() => {
 <template>
   <main id="main-content" class="page bookshelf-page">
     <header class="shelf-header">
-      <div class="shelf-header__brand">
-        <div class="brand-mark" aria-hidden="true">R</div>
-        <div>
-          <p class="eyebrow">私人书房</p>
-          <h1 class="shelf-title">书架</h1>
-        </div>
+      <div class="shelf-header__copy">
+        <h1 class="shelf-title">书架</h1>
+        <p class="shelf-subtitle">
+          {{ entries.length }} 本
+          <span aria-hidden="true">·</span>
+          在读 {{ readingCount }}
+          <span aria-hidden="true">·</span>
+          共 {{ totalCharsLabel }}
+        </p>
       </div>
       <div class="topbar__actions shelf-header__actions">
         <span class="local-badge">
@@ -230,7 +282,6 @@ onMounted(() => {
 
     <div v-if="loading" class="shelf-loading" aria-busy="true" aria-label="正在加载书架">
       <div class="shelf-skeleton-hero" />
-      <div class="shelf-skeleton-stats" />
       <div class="shelf-skeleton-grid">
         <div v-for="index in 6" :key="index" class="book-tile book-card book-card--skeleton">
           <div class="skeleton skeleton--tile" />
@@ -321,27 +372,6 @@ onMounted(() => {
         </RouterLink>
       </section>
 
-      <section class="shelf-stats" aria-label="书架概览">
-        <div class="shelf-stat">
-          <span class="shelf-stat__label">藏书</span>
-          <strong>{{ entries.length }}</strong>
-          <span class="shelf-stat__unit">本</span>
-        </div>
-        <div class="shelf-stat">
-          <span class="shelf-stat__label">在读</span>
-          <strong>{{ readingCount }}</strong>
-          <span class="shelf-stat__unit">本</span>
-        </div>
-        <div class="shelf-stat">
-          <span class="shelf-stat__label">已读完</span>
-          <strong>{{ finishedCount }}</strong>
-          <span class="shelf-stat__unit">本</span>
-        </div>
-        <div class="shelf-stats__caption">
-          共 {{ totalCharsLabel }} · 全部保存在本机
-        </div>
-      </section>
-
       <section class="library-toolbar" aria-label="书架筛选">
         <div class="search-field">
           <AppIcon name="search" :size="18" class="search-field__icon" />
@@ -419,14 +449,34 @@ onMounted(() => {
         <div>
           <h2>{{ activeFilterLabel }}书籍</h2>
           <p>
-            {{ filteredEntries.length }} 本
+            <template v-if="hasMoreEntries">
+              已显示 {{ displayedEntries.length }} /
+              {{ filteredEntries.length }} 本
+            </template>
+            <template v-else>{{ filteredEntries.length }} 本</template>
             <span v-if="search" aria-hidden="true">· 匹配“{{ search }}”</span>
           </p>
         </div>
-        <RouterLink to="/import" class="text-button shelf-add">
-          <AppIcon name="plus" :size="16" />
-          添加
-        </RouterLink>
+        <div class="shelf-section-actions">
+          <RouterLink
+            to="/import"
+            class="shelf-action"
+            aria-label="添加书籍"
+          >
+            <AppIcon name="plus" :size="15" />
+            添加
+          </RouterLink>
+          <button
+            v-if="filteredEntries.length > 0"
+            type="button"
+            class="shelf-manage"
+            :class="{ 'is-active': manageMode }"
+            :aria-pressed="manageMode"
+            @click="manageMode = !manageMode"
+          >
+            {{ manageMode ? '完成' : '管理' }}
+          </button>
+        </div>
       </div>
 
       <div
@@ -458,6 +508,7 @@ onMounted(() => {
       <div
         v-else-if="viewMode === 'grid'"
         class="book-grid"
+        :class="{ 'is-managing': manageMode }"
         aria-label="小说列表"
       >
         <article
@@ -478,6 +529,7 @@ onMounted(() => {
               />
             </RouterLink>
             <button
+              v-if="manageMode"
               type="button"
               class="book-tile__delete"
               :aria-label="`删除《${entry.book.title}》`"
@@ -493,10 +545,9 @@ onMounted(() => {
               {{ entry.book.title }}
             </RouterLink>
           </h2>
-          <p class="book-tile__meta">
-            {{ formatChapterLocation(entry.progress?.chapterIndex ?? 0, entry.book.chapterCount) }}
-          </p>
+          <p class="book-tile__meta">{{ chapterLabel(entry) }}</p>
           <div
+            v-if="entry.percent > 0"
             class="progress-track book-tile__track"
             role="progressbar"
             :aria-label="`《${entry.book.title}》阅读进度`"
@@ -506,12 +557,15 @@ onMounted(() => {
           >
             <span :style="{ width: `${entry.percent}%` }" />
           </div>
-          <div class="book-tile__foot">
-            <span class="book-card__percent">
-              {{ entry.percent > 0 ? `已读 ${entry.percent}%` : '尚未开始' }}
-            </span>
-            <span class="book-tile__time">
-              {{ formatRelativeTime(entry.book.lastReadAt || entry.book.importedAt) }}
+          <div
+            class="book-tile__foot"
+            :class="{ 'book-tile__foot--empty': entry.percent <= 0 }"
+          >
+            <span
+              class="book-card__percent"
+              :class="{ 'book-card__percent--done': entry.percent >= 100 }"
+            >
+              {{ progressLabel(entry) }}
             </span>
           </div>
         </article>
@@ -531,10 +585,11 @@ onMounted(() => {
                 <p class="book-card__meta">
                   <span>{{ formatRelativeTime(entry.book.lastReadAt || entry.book.importedAt) }}</span>
                   <span aria-hidden="true">·</span>
-                  <span>{{ formatChapterLocation(entry.progress?.chapterIndex ?? 0, entry.book.chapterCount) }}</span>
+                  <span>{{ chapterLabel(entry) }}</span>
                 </p>
               </div>
               <button
+                v-if="manageMode"
                 type="button"
                 class="icon-button icon-button--quiet book-card__delete"
                 :aria-label="`删除《${entry.book.title}》`"
@@ -545,6 +600,7 @@ onMounted(() => {
             </div>
 
             <div
+              v-if="entry.percent > 0"
               class="progress-track"
               role="progressbar"
               :aria-label="`《${entry.book.title}》阅读进度`"
@@ -556,8 +612,11 @@ onMounted(() => {
             </div>
 
             <div class="book-card__foot">
-              <span class="book-card__percent">
-                {{ entry.percent > 0 ? `已读 ${entry.percent}%` : '尚未开始' }}
+              <span
+                class="book-card__percent"
+                :class="{ 'book-card__percent--done': entry.percent >= 100 }"
+              >
+                {{ progressLabel(entry) }}
               </span>
               <RouterLink
                 :to="library.readerPath(entry.book.id)"

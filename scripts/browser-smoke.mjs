@@ -178,6 +178,12 @@ async function main() {
       )
     }
 
+    async function openSettingsGroup(label) {
+      const group = page.locator('details.settings-group', { hasText: label })
+      await group.locator('summary').click()
+      await group.locator('.settings-group__body').waitFor({ state: 'visible' })
+    }
+
     async function noHorizontalOverflow(label) {
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - window.innerWidth,
@@ -308,6 +314,7 @@ async function main() {
     await waitForText('#backup-heading', '备份与恢复')
     await page.evaluate(() => window.scrollTo(0, 0))
     await screenshot('06-settings-overview.png')
+    await openSettingsGroup('备份与恢复')
     await page.getByRole('button', { name: /导出完整备份/ }).click()
     await waitForText('.backup-result', '备份已生成', 30_000)
     const [download] = await Promise.all([
@@ -321,6 +328,7 @@ async function main() {
 
     await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
     await waitForText('.book-card__title', '雾中灯')
+    await page.getByRole('button', { name: '管理', exact: true }).click()
     await page.getByRole('button', { name: '删除《雾中灯》' }).click()
     await page.locator('dialog[open]').waitFor({ state: 'visible' })
     await page
@@ -332,6 +340,7 @@ async function main() {
 
     await page.goto(`${appUrl}#/settings`, { waitUntil: 'domcontentloaded' })
     await waitForText('#backup-heading', '备份与恢复')
+    await openSettingsGroup('备份与恢复')
     await page
       .locator('input[type="file"][accept=".zip,application/zip"]')
       .setInputFiles(backupPath)
@@ -451,6 +460,7 @@ async function main() {
 
     await page.goto(`${appUrl}#/settings`, { waitUntil: 'domcontentloaded' })
     await waitForText('#demo-heading', '演示书籍')
+    await openSettingsGroup('演示书籍')
     await page.getByRole('button', { name: /生成 30 本示例书/ }).click()
     await waitForText('.toast', '已加入 30 本示例书', 60_000)
 
@@ -494,6 +504,7 @@ async function main() {
 
     await page.goto(`${appUrl}#/settings`, { waitUntil: 'domcontentloaded' })
     await waitForText('#demo-heading', '演示书籍')
+    await openSettingsGroup('演示书籍')
     await page.getByRole('button', { name: '清除示例书' }).first().click()
     await page.locator('dialog[open]').waitFor({ state: 'visible' })
     await page

@@ -2,6 +2,7 @@
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import AppTabBar from '@/components/AppTabBar.vue'
+import BrandMark from '@/components/BrandMark.vue'
 import PwaUpdatePrompt from '@/components/PwaUpdatePrompt.vue'
 import ToastHost from '@/components/ToastHost.vue'
 import { useAppStore } from '@/stores/app'
@@ -24,7 +25,7 @@ onMounted(() => {
   <a v-if="app.ready" class="skip-link" href="#main-content">跳到主要内容</a>
 
   <div v-if="!app.ready && !app.fatalError" class="app-boot">
-    <div class="app-boot__mark" aria-hidden="true">R</div>
+    <BrandMark :size="68" class="app-boot__brand" />
     <p class="app-boot__name">ReadNook</p>
     <p class="app-boot__hint">正在整理你的私人书架…</p>
   </div>

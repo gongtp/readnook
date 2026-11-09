@@ -6,7 +6,7 @@ import AppIcon from '@/components/AppIcon.vue'
 interface TabItem {
   to: string
   label: string
-  icon: 'book' | 'plus' | 'user'
+  icon: 'book' | 'plus' | 'settings'
   routeName: string
 }
 
@@ -15,7 +15,7 @@ const route = useRoute()
 const tabs: TabItem[] = [
   { to: '/', label: '书架', icon: 'book', routeName: 'library' },
   { to: '/import', label: '导入', icon: 'plus', routeName: 'import' },
-  { to: '/settings', label: '我的', icon: 'user', routeName: 'settings' },
+  { to: '/settings', label: '设置', icon: 'settings', routeName: 'settings' },
 ]
 
 const activeIndex = computed(() =>
