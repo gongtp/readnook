@@ -12,10 +12,12 @@ export type IconName =
   | 'clock'
   | 'close'
   | 'download'
+  | 'grid'
   | 'list'
   | 'more'
   | 'plus'
   | 'refresh'
+  | 'rows'
   | 'search'
   | 'settings'
   | 'share'
@@ -23,6 +25,7 @@ export type IconName =
   | 'trash'
   | 'type'
   | 'upload'
+  | 'user'
 
 const props = withDefaults(
   defineProps<{ name: IconName; size?: number }>(),
@@ -43,10 +46,12 @@ const paths: Record<IconName, string[]> = {
   clock: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 7v5l3 2'],
   close: ['M6 6l12 12', 'M18 6 6 18'],
   download: ['M12 3v12', 'm7 10 5 5 5-5', 'M4 21h16'],
+  grid: ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h6v6h-6z'],
   list: ['M8 6h12', 'M8 12h12', 'M8 18h12', 'M4 6h.01', 'M4 12h.01', 'M4 18h.01'],
   more: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01'],
   plus: ['M12 5v14', 'M5 12h14'],
   refresh: ['M20 11a8 8 0 1 0-2.3 5.7', 'M20 4v7h-7'],
+  rows: ['M4 5h16v4H4z', 'M4 13h16v6H4z'],
   search: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z', 'm21 21-4.3-4.3'],
   settings: [
     'M4 6h16',
@@ -70,6 +75,7 @@ const paths: Record<IconName, string[]> = {
   ],
   type: ['M4 6V4h16v2', 'M12 4v16', 'M9 20h6'],
   upload: ['M12 21V9', 'm7 14 5-5 5 5', 'M4 3h16'],
+  user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', 'M4 21a8 8 0 0 1 16 0'],
 }
 
 const iconPaths = computed(() => paths[props.name])

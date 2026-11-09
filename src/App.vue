@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
+import AppTabBar from '@/components/AppTabBar.vue'
 import PwaUpdatePrompt from '@/components/PwaUpdatePrompt.vue'
 import ToastHost from '@/components/ToastHost.vue'
 import { useAppStore } from '@/stores/app'
 
 const app = useAppStore()
+const route = useRoute()
+
+const showTabBar = computed(() => route.name !== 'reader')
 
 function reload(): void {
   window.location.reload()
@@ -38,6 +43,7 @@ onMounted(() => {
   </div>
 
   <RouterView v-else />
+  <AppTabBar v-if="app.ready && showTabBar" />
   <PwaUpdatePrompt v-if="app.ready" />
   <ToastHost />
 </template>

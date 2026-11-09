@@ -186,8 +186,8 @@ async function main() {
     }
 
     await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
-    await waitForText('.brand-title', 'ReadNook')
-    await waitForText('.state-panel h2', '书架还是空的')
+    await waitForText('.shelf-title', '书架')
+    await waitForText('.state-panel h2', '把第一本小说带进来')
     await noHorizontalOverflow('空书架')
     await screenshot('01-empty-shelf.png')
 
@@ -196,7 +196,7 @@ async function main() {
       await navigator.serviceWorker.ready
     })
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await waitForText('.brand-title', 'ReadNook')
+    await waitForText('.shelf-title', '书架')
     const controlled = await page.evaluate(
       () => navigator.serviceWorker.controller !== null,
     )
@@ -296,8 +296,18 @@ async function main() {
     )
     await screenshot('05-shelf-with-progress.png')
 
+    await page.getByRole('button', { name: '列表视图' }).click()
+    await page.locator('.book-list').waitFor({ state: 'visible' })
+    assert(true, '书架可在封面网格和列表视图之间切换')
+
+    await page.getByRole('button', { name: '封面网格视图' }).click()
+    await page.locator('.book-grid').waitFor({ state: 'visible' })
+    assert(true, '书架切回封面网格后仍然显示书籍')
+
     await page.goto(`${appUrl}#/settings`, { waitUntil: 'domcontentloaded' })
     await waitForText('#backup-heading', '备份与恢复')
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await screenshot('06-settings-overview.png')
     await page.getByRole('button', { name: /导出完整备份/ }).click()
     await waitForText('.backup-result', '备份已生成', 30_000)
     const [download] = await Promise.all([
@@ -317,7 +327,7 @@ async function main() {
       .locator('dialog[open]')
       .getByRole('button', { name: '删除', exact: true })
       .click()
-    await waitForText('.state-panel h2', '书架还是空的')
+    await waitForText('.state-panel h2', '把第一本小说带进来')
     assert(true, '删除书籍后书架为空，级联数据已清理')
 
     await page.goto(`${appUrl}#/settings`, { waitUntil: 'domcontentloaded' })
@@ -352,7 +362,7 @@ async function main() {
 
     await context.setOffline(true)
     await page.reload({ waitUntil: 'domcontentloaded' })
-    await waitForText('.brand-title', 'ReadNook')
+    await waitForText('.shelf-title', '书架')
     await waitForText('.book-card__title', '雾中灯')
     assert(true, '断网刷新后应用与书库仍可打开')
 

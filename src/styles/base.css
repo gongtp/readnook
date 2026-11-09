@@ -17,7 +17,14 @@ body {
   min-height: 100dvh;
   margin: 0;
   overflow-x: hidden;
-  background: var(--bg);
+  background:
+    radial-gradient(
+      120% 46% at 100% 0%,
+      color-mix(in srgb, var(--accent-soft), transparent 58%),
+      transparent 72%
+    ),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font-family: var(--font-ui);
   font-size: 16px;
@@ -128,13 +135,106 @@ a:hover {
   transform: translateY(0);
 }
 
+.app-tabbar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 70;
+  padding: 5px max(8px, var(--safe-right)) calc(5px + var(--safe-bottom))
+    max(8px, var(--safe-left));
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated), transparent 7%);
+  box-shadow: 0 -10px 34px rgba(51, 36, 21, 0.07);
+  backdrop-filter: blur(18px) saturate(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.app-tabbar__inner {
+  display: grid;
+  width: min(100%, 540px);
+  margin: 0 auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.app-tabbar__link {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 52px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  transition: color 150ms ease;
+}
+
+.app-tabbar__icon {
+  display: grid;
+  width: 44px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  transition: background-color 160ms ease, transform 160ms ease;
+}
+
+.app-tabbar__link.is-active {
+  color: var(--accent);
+}
+
+.app-tabbar__link.is-active .app-tabbar__icon {
+  background: var(--accent-soft);
+}
+
+.app-tabbar__link.is-active .app-tabbar__label {
+  font-weight: 750;
+}
+
+@media (hover: hover) {
+  .app-tabbar__link:hover {
+    color: var(--text);
+  }
+
+  .app-tabbar__link:hover .app-tabbar__icon {
+    background: var(--surface-muted);
+  }
+}
+
+.app-tabbar__link:active .app-tabbar__icon {
+  transform: scale(0.92);
+}
+
+@media (min-width: 760px) {
+  .app-tabbar {
+    right: auto;
+    bottom: 16px;
+    left: 50%;
+    width: min(520px, calc(100% - 32px));
+    transform: translateX(-50%);
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    box-shadow: var(--shadow);
+  }
+
+  .app-tabbar__link {
+    border-radius: 999px;
+  }
+}
+
 .page {
   width: min(100%, var(--page-width));
   min-height: 100vh;
   min-height: 100dvh;
   margin: 0 auto;
   padding: calc(14px + var(--safe-top)) max(20px, var(--safe-right))
-    calc(44px + var(--safe-bottom)) max(20px, var(--safe-left));
+    calc(104px + var(--safe-bottom)) max(20px, var(--safe-left));
 }
 
 .eyebrow {
@@ -660,7 +760,7 @@ input[type="checkbox"] {
 .toast-host {
   position: fixed;
   right: 12px;
-  bottom: calc(82px + var(--safe-bottom));
+  bottom: calc(104px + var(--safe-bottom));
   left: 12px;
   z-index: 100;
   display: flex;

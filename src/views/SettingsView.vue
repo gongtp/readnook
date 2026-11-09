@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import BaseDialog from '@/components/BaseDialog.vue'
 import ReaderSettingsPanel from '@/components/ReaderSettingsPanel.vue'
@@ -25,7 +24,6 @@ import {
   formatDateTime,
 } from '@/utils/format'
 
-const router = useRouter()
 const toast = useToastStore()
 const settingsStore = useReaderSettingsStore()
 
@@ -255,21 +253,22 @@ onBeforeUnmount(() => {
 
 <template>
   <main id="main-content" class="page settings-page">
-    <header class="topbar topbar--sub">
-      <button
-        type="button"
-        class="icon-button"
-        aria-label="返回书架"
-        @click="router.push('/')"
-      >
-        <AppIcon name="arrow-left" :size="21" />
-      </button>
-      <div class="topbar__center">
-        <p class="eyebrow">本地优先</p>
-        <h1>设置与数据</h1>
+    <header class="profile-card">
+      <div class="profile-card__avatar" aria-hidden="true">R</div>
+      <div class="profile-card__copy">
+        <p class="eyebrow">私人书房</p>
+        <h1>我的 ReadNook</h1>
+        <p>无账号、无上传，只读本机上的书。</p>
       </div>
-      <span class="topbar__spacer" aria-hidden="true" />
+      <span class="local-badge">
+        <AppIcon name="shield" :size="13" />
+        本地模式
+      </span>
     </header>
+
+    <p class="settings-intro">
+      管理阅读偏好、本机存储和完整备份。
+    </p>
 
     <section class="panel" aria-labelledby="appearance-heading">
       <div class="panel__head">
