@@ -796,14 +796,15 @@
   height: 29px;
   place-items: center;
   border-radius: 50%;
-  background: rgba(31, 23, 16, 0.42);
-  color: rgba(255, 250, 242, 0.9);
+  background: rgba(31, 23, 16, 0.34);
+  color: rgba(255, 250, 242, 0.88);
   backdrop-filter: blur(6px);
-  opacity: 0.86;
+  opacity: 0.52;
   transition: opacity 150ms ease, background-color 150ms ease;
 }
 
-.book-tile__delete:hover {
+.book-tile__delete:hover,
+.book-tile__delete:focus-visible {
   background: rgba(31, 23, 16, 0.68);
   opacity: 1;
 }

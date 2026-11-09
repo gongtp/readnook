@@ -15,6 +15,7 @@ import {
   requestPersistentStorage,
   type StorageStatus,
 } from '@/services/storageService'
+import { clearDemoLibrary, seedDemoLibrary } from '@/services/demoService'
 import { useReaderSettingsStore } from '@/stores/readerSettings'
 import { useToastStore } from '@/stores/toast'
 import type { PreparedBackup, RestoreSummary } from '@/types/backup'
@@ -45,6 +46,10 @@ const preparedBackup = ref<PreparedBackup | null>(null)
 const restoreDialogOpen = ref(false)
 const restoreSettings = ref(true)
 const restoreSummary = ref<RestoreSummary | null>(null)
+
+const demoBusy = ref(false)
+const demoStage = ref('')
+const demoClearDialogOpen = ref(false)
 
 const usagePercent = computed(() => {
   const usage = storageStatus.value?.usage
@@ -234,6 +239,57 @@ async function confirmRestore(): Promise<void> {
   }
 }
 
+async function addDemoBooks(): Promise<void> {
+  if (demoBusy.value) return
+  demoBusy.value = true
+  demoStage.value = '正在准备示例书籍…'
+  try {
+    const result = await seedDemoLibrary((done, total) => {
+      demoStage.value = `正在生成 ${done} / ${total} 本…`
+    })
+    if (result.added > 0) {
+      toast.success(
+        `已加入 ${result.added} 本示例书，回到书架即可查看分页。`,
+      )
+    } else {
+      toast.show('示例书籍已经全部存在，可直接回到书架查看。', 'info')
+    }
+  } catch (error) {
+    toast.error(
+      getErrorMessage(
+        error,
+        '生成示例书籍失败。原有书库没有受到影响。',
+      ),
+    )
+  } finally {
+    demoBusy.value = false
+    demoStage.value = ''
+  }
+}
+
+async function confirmClearDemoBooks(): Promise<void> {
+  if (demoBusy.value) return
+  demoBusy.value = true
+  demoStage.value = '正在清除示例书籍…'
+  try {
+    const count = await clearDemoLibrary()
+    demoClearDialogOpen.value = false
+    toast.success(
+      count > 0 ? `已清除 ${count} 本示例书。` : '没有找到可清除的示例书。',
+    )
+  } catch (error) {
+    toast.error(
+      getErrorMessage(
+        error,
+        '清除示例书失败，已有书籍没有被修改。',
+      ),
+    )
+  } finally {
+    demoBusy.value = false
+    demoStage.value = ''
+  }
+}
+
 onMounted(() => {
   void refreshStorage()
   if (typeof navigator.canShare === 'function') {
@@ -278,6 +334,42 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <ReaderSettingsPanel />
+    </section>
+
+    <section class="panel" aria-labelledby="demo-heading">
+      <div class="panel__head">
+        <div>
+          <p class="eyebrow">界面预览</p>
+          <h2 id="demo-heading">演示书籍</h2>
+        </div>
+        <span class="status-pill">仅本机</span>
+      </div>
+      <p class="muted">
+        生成 30 本带不同阅读进度的短篇示例书，用来查看书架筛选、分页和继续阅读效果。示例书只写入当前浏览器，可随时清除。
+      </p>
+      <div class="button-row">
+        <button
+          type="button"
+          class="button button--primary"
+          :disabled="demoBusy || restoreBusy || exportBusy"
+          @click="addDemoBooks"
+        >
+          <AppIcon name="plus" :size="18" />
+          {{ demoBusy ? demoStage || '正在生成…' : '生成 30 本示例书' }}
+        </button>
+        <button
+          type="button"
+          class="button"
+          :disabled="demoBusy || restoreBusy || exportBusy"
+          @click="demoClearDialogOpen = true"
+        >
+          <AppIcon name="trash" :size="17" />
+          清除示例书
+        </button>
+      </div>
+      <p class="field__hint">
+        示例书按 12 本一批显示，回到书架后点击“显示更多”即可看到下一页。
+      </p>
     </section>
 
     <section class="panel" aria-labelledby="storage-heading">
@@ -557,6 +649,34 @@ onBeforeUnmount(() => {
           @click="confirmRestore"
         >
           {{ restoreBusy ? restoreStage || '正在恢复…' : '开始恢复' }}
+        </button>
+      </template>
+    </BaseDialog>
+
+    <BaseDialog
+      v-model:open="demoClearDialogOpen"
+      title="清除演示书籍？"
+      aria-label="确认清除演示书籍"
+    >
+      <p>
+        将删除由“生成示例书”加入的书籍及其章节、阅读进度和书签。你自己导入的书籍不会被删除。
+      </p>
+      <template #footer>
+        <button
+          type="button"
+          class="button"
+          :disabled="demoBusy"
+          @click="demoClearDialogOpen = false"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          class="button button--danger"
+          :disabled="demoBusy"
+          @click="confirmClearDemoBooks"
+        >
+          {{ demoBusy ? demoStage || '正在清除…' : '清除示例书' }}
         </button>
       </template>
     </BaseDialog>

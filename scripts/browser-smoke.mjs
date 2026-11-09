@@ -449,6 +449,47 @@ async function main() {
     assert(duplicateImportDisabled, '重复内容会提示已导入并禁用导入按钮')
     await screenshot('10-duplicate-detection.png')
 
+    await page.goto(`${appUrl}#/settings`, { waitUntil: 'domcontentloaded' })
+    await waitForText('#demo-heading', '演示书籍')
+    await page.getByRole('button', { name: /生成 30 本示例书/ }).click()
+    await waitForText('.toast', '已加入 30 本示例书', 60_000)
+
+    await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll('.book-card:not(.book-card--skeleton)')
+          .length === 12,
+      undefined,
+      { timeout: 20_000 },
+    )
+    assert(true, '示例书第一页只渲染 12 本，分页生效')
+
+    await page.getByRole('button', { name: /显示更多/ }).scrollIntoViewIfNeeded()
+    await screenshot('11-demo-pagination.png')
+
+    await page.getByRole('button', { name: /显示更多/ }).click()
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll('.book-card:not(.book-card--skeleton)')
+          .length === 24,
+      undefined,
+      { timeout: 20_000 },
+    )
+    assert(true, '点击“显示更多”后加载到第二批 24 本')
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+    await screenshot('12-demo-page2.png')
+
+    await page.goto(`${appUrl}#/settings`, { waitUntil: 'domcontentloaded' })
+    await waitForText('#demo-heading', '演示书籍')
+    await page.getByRole('button', { name: '清除示例书' }).first().click()
+    await page.locator('dialog[open]').waitFor({ state: 'visible' })
+    await page
+      .locator('dialog[open]')
+      .getByRole('button', { name: '清除示例书' })
+      .click()
+    await waitForText('.toast', '已清除 30 本示例书', 30_000)
+    assert(true, '示例书可一键清除，不影响自己导入的书')
+
     const unexpectedErrors = consoleErrors.filter(
       (message) =>
         !message.includes('favicon') &&
