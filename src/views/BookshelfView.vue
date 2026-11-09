@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import AppIcon from '@/components/AppIcon.vue'
 import BaseDialog from '@/components/BaseDialog.vue'
@@ -38,6 +38,16 @@ const shelfFilter = ref<ShelfFilter>('all')
 const viewMode = ref<ShelfView>('grid')
 const pageSize = 12
 const visibleLimit = ref(pageSize)
+const loadMoreSentinel = ref<HTMLElement | null>(null)
+const loadMoreObserver =
+  typeof IntersectionObserver === 'undefined'
+    ? null
+    : new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) loadMore()
+        },
+        { rootMargin: '320px 0px' },
+      )
 
 const readingCount = computed(
   () =>
@@ -136,6 +146,24 @@ const resumeActionLabel = computed(() => {
 watch([search, sort, shelfFilter], () => {
   visibleLimit.value = pageSize
 })
+
+watch(
+  loadMoreSentinel,
+  (element, previous) => {
+    if (previous) loadMoreObserver?.unobserve(previous)
+    if (element) loadMoreObserver?.observe(element)
+  },
+  { flush: 'post' },
+)
+
+onBeforeUnmount(() => {
+  loadMoreObserver?.disconnect()
+})
+
+function loadMore(): void {
+  if (!hasMoreEntries.value) return
+  visibleLimit.value += pageSize
+}
 
 function requestDelete(book: Book): void {
   deleteTarget.value = book
@@ -543,17 +571,23 @@ onMounted(() => {
         </li>
       </ul>
 
-      <div v-if="hasMoreEntries" class="shelf-loadmore">
+      <div
+        v-if="hasMoreEntries"
+        ref="loadMoreSentinel"
+        class="shelf-loadmore"
+        aria-live="polite"
+      >
         <button
           type="button"
           class="button"
-          @click="visibleLimit += pageSize"
+          @click="loadMore"
         >
           显示更多
           <span class="shelf-loadmore__count">
             还有 {{ remainingEntries }} 本
           </span>
         </button>
+        <p class="shelf-loadmore__hint">继续下滑会自动加载</p>
       </div>
     </template>
 

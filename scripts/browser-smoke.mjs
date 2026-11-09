@@ -463,11 +463,15 @@ async function main() {
       { timeout: 20_000 },
     )
     assert(true, '示例书第一页只渲染 12 本，分页生效')
-
-    await page.getByRole('button', { name: /显示更多/ }).scrollIntoViewIfNeeded()
+    assert(
+      await page
+        .getByRole('button', { name: /显示更多/ })
+        .isVisible(),
+      '首屏保留“显示更多”按钮作为兜底',
+    )
     await screenshot('11-demo-pagination.png')
 
-    await page.getByRole('button', { name: /显示更多/ }).click()
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
     await page.waitForFunction(
       () =>
         document.querySelectorAll('.book-card:not(.book-card--skeleton)')
@@ -475,9 +479,18 @@ async function main() {
       undefined,
       { timeout: 20_000 },
     )
-    assert(true, '点击“显示更多”后加载到第二批 24 本')
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+    assert(true, '滚动到底会自动加载第二批 24 本，无需点击')
     await screenshot('12-demo-page2.png')
+
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll('.book-card:not(.book-card--skeleton)')
+          .length === 33,
+      undefined,
+      { timeout: 20_000 },
+    )
+    assert(true, '继续下滑可加载全部 33 本（含 3 本导入书）')
 
     await page.goto(`${appUrl}#/settings`, { waitUntil: 'domcontentloaded' })
     await waitForText('#demo-heading', '演示书籍')
