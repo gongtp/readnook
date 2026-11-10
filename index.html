@@ -11,7 +11,13 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <!--
+      不要加 apple-mobile-web-app-status-bar-style：iOS 26 起 black-translucent
+      已被废弃（Home Screen web app 不再允许内容画到状态栏下面，只会糊上一层暗色蒙层），
+      Apple 的建议是删掉这个 key，让状态栏自动取页面背景色。
+      注意：系统是在启动时缓存这个背景色的，应用内换主题后要重开 App 才会同步
+      （WebKit bug 301994 / 317153）。
+    -->
     <meta name="apple-mobile-web-app-title" content="ReadNook" />
     <link rel="icon" href="%BASE_URL%icons/icon.svg" type="image/svg+xml" />
     <link
@@ -22,11 +28,21 @@
     <title>ReadNook</title>
     <script>
       ;(() => {
+        const THEME_COLORS = {
+          paper: '#f6efe3',
+          sepia: '#edf1e5',
+          dark: '#171916',
+        }
         try {
           const theme = localStorage.getItem('readnook.theme')
-          if (theme === 'paper' || theme === 'sepia' || theme === 'dark') {
-            document.documentElement.dataset.theme = theme
-          }
+          if (theme !== 'paper' && theme !== 'sepia' && theme !== 'dark') return
+          const root = document.documentElement
+          root.dataset.theme = theme
+          // 首帧就把浏览器/系统 UI 的颜色定对，避免先亮后暗闪一下。
+          root.style.colorScheme = theme === 'dark' ? 'dark' : 'light'
+          document
+            .querySelector('meta[name="theme-color"]')
+            ?.setAttribute('content', THEME_COLORS[theme])
         } catch {
           // 主题镜像不可用时使用默认主题，不影响阅读数据。
         }

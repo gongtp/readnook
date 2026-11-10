@@ -101,6 +101,14 @@ async function main() {
   check(!indexHtml.includes('__DSH'), 'index.html 含有构建占位符')
   check(indexHtml.includes('viewport-fit=cover'), '缺少 iPhone 安全区 viewport')
   check(indexHtml.includes('apple-mobile-web-app-capable'), '缺少 Apple PWA 元信息')
+  check(
+    !/<meta[^>]+name="apple-mobile-web-app-status-bar-style"/i.test(indexHtml),
+    '不应再声明 apple-mobile-web-app-status-bar-style（iOS 26 起已废弃，状态栏自动取页面背景色）',
+  )
+  check(
+    indexHtml.includes('meta[name="theme-color"]'),
+    '首屏内联脚本需要同步 theme-color，避免状态栏/浏览器配色落后于主题',
+  )
 
   const manifest = JSON.parse(await readText('manifest.webmanifest'))
   check(manifest.name === 'ReadNook', 'manifest name 不正确')
