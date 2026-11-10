@@ -18,6 +18,7 @@ import {
 export interface ImportSaveInput {
   file: File
   title: string
+  author?: string
   parsed: ParsedBook
   contentHash: string
   encoding: TextEncoding
@@ -28,6 +29,14 @@ export class DuplicateBookError extends Error {
     super(message)
     this.name = 'DuplicateBookError'
   }
+}
+
+export function sanitizeBookAuthor(author?: string): string | undefined {
+  return author
+    ?.replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80) || undefined
 }
 
 export function sanitizeBookTitle(title: string, sourceFileName: string): string {
@@ -90,6 +99,7 @@ export async function saveImportedBook(
   const book: Book = {
     id: bookId,
     title: sanitizeBookTitle(input.title, input.file.name),
+    author: sanitizeBookAuthor(input.author),
     format: 'txt',
     sourceFileName: input.file.name,
     contentHash: input.contentHash,

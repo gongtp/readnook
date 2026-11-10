@@ -2,16 +2,33 @@ import { AUTO_SEGMENT_CHARS, MAX_CHAPTER_CHARS, PARSER_VERSION } from '@/config/
 import type { ParsedBook, ParsedChapter } from '@/types/importer'
 import type { AutoSplitReason } from '@/types/models'
 
-const CHINESE_NUMBER = '0-9０-９零〇一二三四五六七八九十百千万两壹贰叁肆伍陆柒捌玖拾佰仟'
-const CHAPTER_UNIT = '章回节卷集部篇'
-const TITLE_SEPARATOR = '[\\s:：·.、\\-—]+'
+const CHINESE_NUMBER = '0-9零〇○一二三四五六七八九十百千万亿两兩壹贰貳叁參肆伍陆陸柒捌玖拾佰仟'
+const CHAPTER_UNIT = '章回节節卷集部篇'
+const TITLE_SEPARATOR = '[\\s:：·.、,，\\-—_]+'
+const NUMBER = `[${CHINESE_NUMBER}]{1,12}`
 
+// 带明确章节单位的标题允许直接接标题，如“第一章起源”。
 const NUMBERED_CHAPTER = new RegExp(
-  `^第\\s*[${CHINESE_NUMBER}]{1,12}\\s*[${CHAPTER_UNIT}](?:${TITLE_SEPARATOR}.*)?$`,
+  `^第\\s*${NUMBER}\\s*[${CHAPTER_UNIT}].*$`,
+  'u',
+)
+const UNIT_FIRST_CHAPTER = new RegExp(
+  `^[卷部篇章回节節集]\\s*${NUMBER}(?:${TITLE_SEPARATOR}.*|[^${CHINESE_NUMBER}\\s].*)?$`,
   'u',
 )
 const SPECIAL_CHAPTER = new RegExp(
-  `^(?:序章|序言|楔子|引子|尾声|终章|后记|番外(?:篇)?(?:\\s*[${CHINESE_NUMBER}]{1,8})?)(?:${TITLE_SEPARATOR}.*)?$`,
+  `^(?:序|前言|前记|前記|序章|序言|序幕|序曲|序篇|楔子|引子|引言|尾声|尾聲|终章|終章|终卷|終卷|终幕|終幕|结语|結語|后记|後記|后序|後序|跋|附录|附錄|番外(?:篇|章|卷)?(?:\\s*${NUMBER})?|外传|外傳)(?:${TITLE_SEPARATOR}.*)?$`,
+  'u',
+)
+const ENGLISH_CHAPTER = /^(?:chapter|chap\.?|ch\.?|part|book|volume|vol\.?|section)\s+(?:\d{1,6}|[ivxlcdm]{1,12})(?=$|[\s:：.、,，\-—_])(?:[\s:：.、,，\-—_]+.*)?$/iu
+const ENGLISH_SPECIAL_CHAPTER = /^(?:prologue|epilogue|preface|foreword|afterword|introduction)(?:[\s:：.\-—]+.*)?$/iu
+// 纯编号缺少“章”等标记，要求有明确分隔符，句点后不能紧接数字，避免误认小数。
+const NUMBER_ONLY_CHAPTER = new RegExp(
+  `^(?:(?:[0-9]{1,6}|[${CHINESE_NUMBER.replace('0-9', '')}]{1,8})(?:[、:：]\\s*|[.](?![0-9])\\s*|\\s+[-—]\\s*)|[0-9]{1,6}\\s+)(?=\\S).+$`,
+  'u',
+)
+const BRACKETED_NUMBER_CHAPTER = new RegExp(
+  `^(?:【${NUMBER}】|\\[${NUMBER}\\]|\\(${NUMBER}\\))(?:${TITLE_SEPARATOR})?\\S.*$`,
   'u',
 )
 
@@ -20,7 +37,25 @@ const MAX_TITLE_CHARS = 80
 export function isChapterTitle(line: string): boolean {
   const trimmed = line.trim()
   if (!trimmed || trimmed.length > MAX_TITLE_CHARS) return false
-  return NUMBERED_CHAPTER.test(trimmed) || SPECIAL_CHAPTER.test(trimmed)
+  // 仅规范化用于匹配的副本，目录标题仍保留原文。
+  let candidate = trimmed.normalize('NFKC')
+  const wrappers = [['【', '】'], ['[', ']'], ['(', ')'], ['〔', '〕'], ['〈', '〉']]
+  for (const [open, close] of wrappers) {
+    if (open && close && candidate.startsWith(open) && candidate.endsWith(close)) {
+      candidate = candidate.slice(open.length, -close.length).trim()
+      break
+    }
+  }
+  candidate = candidate.replace(/^正文(?:[\s:：\-—]+|(?=第))/, '')
+  // 完整叙述句通常不是标题；宽松编号规则尤其容易误认正文。
+  if (/[。；;]$/u.test(candidate)) return false
+  return NUMBERED_CHAPTER.test(candidate)
+    || UNIT_FIRST_CHAPTER.test(candidate)
+    || SPECIAL_CHAPTER.test(candidate)
+    || ENGLISH_CHAPTER.test(candidate)
+    || ENGLISH_SPECIAL_CHAPTER.test(candidate)
+    || NUMBER_ONLY_CHAPTER.test(candidate)
+    || BRACKETED_NUMBER_CHAPTER.test(candidate)
 }
 
 function trimBoundaryNewlines(value: string): string {

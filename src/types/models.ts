@@ -14,6 +14,7 @@ export interface ReaderSettings {
 export interface Book {
   id: string
   title: string
+  author?: string
   format: BookFormat
   sourceFileName: string
   contentHash: string

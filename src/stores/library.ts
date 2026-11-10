@@ -31,6 +31,7 @@ export const useLibraryStore = defineStore('library', () => {
       ? entries.value.filter(
           (entry) =>
             entry.book.title.toLocaleLowerCase('zh-CN').includes(query) ||
+            (entry.book.author?.toLocaleLowerCase('zh-CN').includes(query) ?? false) ||
             entry.book.sourceFileName
               .toLocaleLowerCase('zh-CN')
               .includes(query),

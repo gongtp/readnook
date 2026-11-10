@@ -512,6 +512,14 @@
   background: rgba(255, 255, 255, 0.17);
 }
 
+.book-author,
+.resume-card__copy .book-author {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .resume-card__track > span {
   display: block;
   height: 100%;
@@ -1268,7 +1276,7 @@
   /* 页间留白由 ReaderView 按“2 × 页边距”算好写进内联样式，这里只是兜底。 */
   column-gap: 0;
   column-fill: auto;
-  transition: transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform var(--reader-turn-duration, 240ms) cubic-bezier(0.2, 0.75, 0.25, 1);
   will-change: transform;
 }
 
@@ -1277,7 +1285,7 @@
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  transition: transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform var(--reader-turn-duration, 240ms) cubic-bezier(0.2, 0.75, 0.25, 1);
 }
 
 .reader-neighbor.is-snapping,
@@ -1820,6 +1828,9 @@
 
 .settings-group__body .button-row {
   gap: 8px;
+}
+
+.settings-group__body > .button-row {
   margin-top: 12px;
 }
 
@@ -1830,9 +1841,12 @@
 }
 
 .settings-group__body .field__hint {
-  margin-top: 10px;
   font-size: 11px;
   line-height: 1.55;
+}
+
+.settings-group__body > .field__hint {
+  margin-top: 10px;
 }
 
 .settings-group__body .notice {
@@ -1842,7 +1856,15 @@
   line-height: 1.65;
 }
 
-.settings-group__body .data-list {
+.settings-group__body > .data-list {
+  margin-top: 12px;
+}
+
+.settings-group__body > .data-list:first-child {
+  margin-top: 0;
+}
+
+.settings-group__body > .data-list + .button {
   margin-top: 12px;
 }
 
@@ -1852,7 +1874,8 @@
   line-height: 1.65;
 }
 
-.settings-group__body .instruction-list + .settings-body-text {
+.settings-group__body .instruction-list + .settings-body-text,
+.settings-group__body .data-list + .settings-body-text {
   margin-top: 12px;
 }
 

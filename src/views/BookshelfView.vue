@@ -352,6 +352,9 @@ onMounted(() => {
             />
             <div class="resume-card__copy">
               <h2>{{ continueEntry.book.title }}</h2>
+              <p v-if="continueEntry.book.author" class="book-author" :title="continueEntry.book.author">
+                作者：{{ continueEntry.book.author }}
+              </p>
               <p>
                 {{ bookLocation(continueEntry) }}
                 <span aria-hidden="true">·</span>
@@ -382,12 +385,12 @@ onMounted(() => {
       <section class="library-toolbar" aria-label="书架筛选">
         <div class="search-field">
           <AppIcon name="search" :size="18" class="search-field__icon" />
-          <label class="sr-only" for="shelf-search">搜索书名</label>
+          <label class="sr-only" for="shelf-search">搜索书名、作者或文件名</label>
           <input
             id="shelf-search"
             v-model="search"
             type="search"
-            placeholder="搜索书名或文件名"
+            placeholder="搜索书名、作者或文件名"
             autocomplete="off"
             enterkeyhint="search"
           />
@@ -552,6 +555,9 @@ onMounted(() => {
               {{ entry.book.title }}
             </RouterLink>
           </h2>
+          <p v-if="entry.book.author" class="book-tile__meta book-author" :title="entry.book.author">
+            作者：{{ entry.book.author }}
+          </p>
           <p class="book-tile__meta">{{ chapterLabel(entry) }}</p>
           <div
             v-if="entry.status !== 'unread'"
@@ -589,6 +595,9 @@ onMounted(() => {
                     {{ entry.book.title }}
                   </RouterLink>
                 </h2>
+                <p v-if="entry.book.author" class="book-card__meta book-author" :title="entry.book.author">
+                  作者：{{ entry.book.author }}
+                </p>
                 <p class="book-card__meta">
                   <span>{{ formatRelativeTime(entry.book.lastReadAt || entry.book.importedAt) }}</span>
                   <span aria-hidden="true">·</span>

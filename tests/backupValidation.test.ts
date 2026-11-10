@@ -90,6 +90,18 @@ function expectValidationError(value: unknown, fragment?: string): void {
 }
 
 describe('validateBackupManifest', () => {
+  it('preserves optional authors and accepts older backups without them', () => {
+    const withAuthor = validateBackupManifest(makeManifest([makeBook({ author: '  某位作者  ' })]))
+    expect(withAuthor.books[0]?.author).toBe('某位作者')
+    expect(validateBackupManifest(makeManifest()).books[0]?.author).toBeUndefined()
+    expect(validateBackupManifest(makeManifest([makeBook({ author: '' })])).books[0]?.author).toBeUndefined()
+  })
+
+  it('rejects invalid author metadata', () => {
+    expectValidationError(makeManifest([makeBook({ author: '甲'.repeat(81) })]), 'author')
+    expectValidationError(makeManifest([makeBook({ author: 123 as unknown as string })]), 'author')
+  })
+
   it('accepts and normalizes a complete manifest', () => {
     const manifest = validateBackupManifest({
       ...makeManifest(),

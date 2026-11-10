@@ -16,6 +16,7 @@ import { txtFormatAdapter } from '@/services/import/txtFormatAdapter'
 import {
   createChapterBundle,
   sanitizeBookTitle,
+  sanitizeBookAuthor,
 } from '@/services/import/importBook'
 import type {
   BackupBook,
@@ -60,6 +61,7 @@ function toBackupBook(
   return {
     id: book.id,
     title: book.title,
+    author: book.author,
     format: 'txt',
     sourceFileName: book.sourceFileName,
     contentHash: book.contentHash,
@@ -380,6 +382,7 @@ export async function executeBackupRestore(
       const book: Book = {
         id: bookId,
         title: sanitizeBookTitle(backupBook.title, backupBook.sourceFileName),
+        author: sanitizeBookAuthor(backupBook.author),
         format: 'txt',
         sourceFileName: backupBook.sourceFileName,
         contentHash: backupBook.contentHash,

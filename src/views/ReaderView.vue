@@ -47,6 +47,7 @@ import { countPages, offsetOfPage, pageOfOffset } from '@/utils/domPosition'
 import { createId } from '@/utils/id'
 import { formatRelativeTime } from '@/utils/format'
 import { getErrorMessage } from '@/utils/errors'
+import { pageTurnDuration, resistPageBoundary, resolvePageTurn } from '@/domain/pageTurn'
 
 const route = useRoute()
 const router = useRouter()
@@ -83,6 +84,7 @@ const layoutReady = ref(false)
 const chapterSwapping = ref(false)
 /** 跟手翻页时手指带来的额外位移（px，左负右正）。 */
 const dragOffset = ref(0)
+const motionDuration = ref(240)
 
 /**
  * 相邻两页之间留一条空白，跟手翻页时两页不会贴成一行字。
@@ -99,12 +101,18 @@ let loadSerial = 0
 let touchStartX = 0
 let touchStartY = 0
 let touchStartAt = 0
+let pagesTouchActive = false
+let touchDuringChapterLoad = false
 let lastFlipAt = 0
-let dragAxis: 'none' | 'horizontal' = 'none'
+let dragAxis: 'none' | 'horizontal' | 'vertical' = 'none'
 let dragLastX = 0
 let dragLastAt = 0
 let dragVelocity = 0
 let dragPeak = 0
+let dragOriginOffset = 0
+let pageSettling = false
+let settleTimer: ReturnType<typeof setTimeout> | null = null
+let queuedTurn: -1 | 1 | null = null
 
 const articleStyle = computed(() => ({
   transform: `translateX(${-pageIndex.value * pageStride.value + dragOffset.value}px)`,
@@ -127,8 +135,8 @@ const canGoNext = computed(() => {
 function adjacentPage(direction: -1 | 1) {
   const target = computed(() => {
     const chapter = currentChapter.value
-    const atEdge = direction < 0 ? pageIndex.value === 0 : pageIndex.value === pageCount.value - 1
-    return chapter && atEdge ? chapters.value[chapter.order + direction] : undefined
+    const nearEdge = direction < 0 ? pageIndex.value <= 1 : pageIndex.value >= pageCount.value - 2
+    return chapter && nearEdge ? chapters.value[chapter.order + direction] : undefined
   })
   const preview = ref<{ chapter: ChapterMeta; content: string; direction: -1 | 1; offset: number }>()
   let ready: Promise<void> = Promise.resolve()
@@ -148,7 +156,10 @@ function adjacentPage(direction: -1 | 1) {
 }
 const previousPage = adjacentPage(-1)
 const nextPage = adjacentPage(1)
-const neighbors = computed(() => [previousPage.preview.value, nextPage.preview.value].filter(page => !!page))
+const neighbors = computed(() => [
+  pageIndex.value === 0 ? previousPage.preview.value : undefined,
+  pageIndex.value === pageCount.value - 1 ? nextPage.preview.value : undefined,
+].filter(page => !!page))
 
 function positionNeighbor(element: unknown, direction: -1 | 1): void {
   if (direction < 0 && element instanceof HTMLElement) element.scrollLeft = element.scrollWidth
@@ -187,6 +198,7 @@ const readerStyle = computed(() => ({
   '--reader-font-size': `${settingsStore.settings.fontSize}px`,
   '--reader-line-height': String(settingsStore.settings.lineHeight),
   '--reader-inline-padding': `${settingsStore.settings.pageMargin}px`,
+  '--reader-turn-duration': `${motionDuration.value}ms`,
 }))
 
 function snapshotProgress(): void {
@@ -292,13 +304,7 @@ function syncIndicatorsFromPage(): void {
 }
 
 function goToPage(target: number): void {
-  const next = clampPage(target)
-  if (next === pageIndex.value) {
-    syncIndicatorsFromPage()
-    return
-  }
-  pageIndex.value = next
-  syncIndicatorsFromPage()
+  settleDrag(clampPage(target))
 }
 
 /** 换章后让新的一页淡入，避免整块文字硬切造成的“跳”。 */
@@ -312,6 +318,8 @@ function markChapterSwap(): void {
 }
 
 async function restoreOffset(offset: number): Promise<void> {
+  clearPageMotion()
+  dragOffset.value = 0
   layoutReady.value = false
   snapping.value = true
   await nextTick()
@@ -359,6 +367,7 @@ async function loadChapter(
   }
 
   chapterLoading.value = true
+  clearPageMotion(false)
   try {
     const content = turnedContent ?? await getChapterContent(chapter.id)
     if (disposed) return
@@ -396,6 +405,7 @@ async function loadChapter(
         query: { chapter: chapter.chapterKey },
       })
     }
+    runQueuedTurn()
   } catch (loadError) {
     if (disposed) return
     // 换章失败时别把跟手位移留在页面上。
@@ -497,7 +507,7 @@ async function saveAndBack(): Promise<void> {
   await router.push('/')
 }
 
-async function goToAdjacent(direction: -1 | 1): Promise<void> {
+async function goToAdjacent(direction: -1 | 1, velocity = 0): Promise<void> {
   const chapter = currentChapter.value
   if (!chapter) return
   const target = chapters.value[chapter.order + direction]
@@ -514,6 +524,9 @@ async function goToAdjacent(direction: -1 | 1): Promise<void> {
     await nextTick()
     const article = articleRef.value
     article?.getBoundingClientRect()
+    motionDuration.value = pageTurnDuration(
+      Math.abs(-direction * pageStride.value - dragOffset.value), pageStride.value, velocity,
+    )
     snapping.value = false
     dragOffset.value = -direction * pageStride.value
     await nextTick()
@@ -526,6 +539,7 @@ async function goToAdjacent(direction: -1 | 1): Promise<void> {
 }
 
 async function jumpToChapter(chapterKey: string, offset = 0): Promise<void> {
+  clearPageMotion()
   tocOpen.value = false
   if (currentChapter.value?.chapterKey === chapterKey) {
     await restoreOffset(offset)
@@ -535,6 +549,7 @@ async function jumpToChapter(chapterKey: string, offset = 0): Promise<void> {
 }
 
 async function jumpToBookmark(bookmark: Bookmark): Promise<void> {
+  clearPageMotion()
   bookmarksOpen.value = false
   if (currentChapter.value?.chapterKey === bookmark.chapterKey) {
     await restoreOffset(bookmark.charOffset)
@@ -607,7 +622,12 @@ async function removeBookmarkItem(bookmark: Bookmark): Promise<void> {
 }
 
 async function turnPage(direction: -1 | 1): Promise<void> {
-  if (loading.value || chapterLoading.value || !layoutReady.value) return
+  if (loading.value || !layoutReady.value) return
+  if (pageSettling || chapterLoading.value) {
+    // 连点只预留下一次翻页，避免把目标累加成跨过好几页的长动画。
+    queuedTurn = direction
+    return
+  }
   const chapter = currentChapter.value
   if (!chapter) return
 
@@ -627,14 +647,11 @@ async function turnPage(direction: -1 | 1): Promise<void> {
   await goToAdjacent(-1)
 }
 
-const DRAG_START_THRESHOLD = 12
+const DRAG_START_THRESHOLD = 8
+/** Safari 的边缘历史导航必须在 touchstart 阶段阻止。 */
+const HISTORY_SWIPE_EDGE = 32
 /** 手指位移一直没超过这个距离，就仍然算“点按”，交给 click 翻页。 */
 const TAP_SLOP = 20
-/** 松手时位移超过页宽的这个比例就翻页，否则弹回原页。 */
-const DRAG_TURN_RATIO = 0.28
-/** 保留章末和章首原有的换章手势阈值。 */
-const DRAG_BOUNDARY_RATIO = 0.12
-const DRAG_FLICK_VELOCITY = 0.45
 const DRAG_MAX_RATIO = 0.94
 
 function canDragToPreviousPage(): boolean {
@@ -647,8 +664,7 @@ function canDragToNextPage(): boolean {
 
 /** 没有相邻页时给出阻尼，让手指有“到头了”的反馈而不是硬停。 */
 function rubberBand(value: number): number {
-  const limit = pageWidth.value * 0.12
-  return Math.sign(value) * Math.min(limit, Math.abs(value) * 0.28)
+  return resistPageBoundary(value, pageWidth.value)
 }
 
 function constrainDrag(delta: number): number {
@@ -660,12 +676,31 @@ function constrainDrag(delta: number): number {
 }
 
 function onPagesTouchStart(event: TouchEvent): void {
-  if (chapterLoading.value) return
-  if (event.touches.length !== 1) return
+  pagesTouchActive = false
+  if (event.touches.length !== 1) {
+    onPagesTouchCancel()
+    return
+  }
   const touch = event.touches[0]
   if (!touch) return
+  if (event.cancelable &&
+    (touch.clientX <= HISTORY_SWIPE_EDGE || touch.clientX >= window.innerWidth - HISTORY_SWIPE_EDGE)) {
+    event.preventDefault()
+  }
+  touchDuringChapterLoad = chapterLoading.value
   const selection = window.getSelection()
   if (selection && !selection.isCollapsed) return
+  dragOriginOffset = 0
+  if (!touchDuringChapterLoad && pageSettling && articleRef.value && pageStride.value > 0) {
+    // 从屏幕上实际停留的位置接住页面，不能跳到动画的终点再开始拖。
+    const x = new DOMMatrixReadOnly(getComputedStyle(articleRef.value).transform).m41
+    clearPageMotion()
+    const anchor = clampPage(Math.round(-x / pageStride.value))
+    pageIndex.value = anchor
+    dragOriginOffset = x + anchor * pageStride.value
+    snapping.value = true
+    syncIndicatorsFromPage()
+  }
   touchStartX = touch.clientX
   touchStartY = touch.clientY
   touchStartAt = Date.now()
@@ -674,7 +709,8 @@ function onPagesTouchStart(event: TouchEvent): void {
   dragVelocity = 0
   dragPeak = 0
   dragAxis = 'none'
-  dragOffset.value = 0
+  if (!touchDuringChapterLoad) dragOffset.value = dragOriginOffset
+  pagesTouchActive = true
 }
 
 /**
@@ -682,6 +718,7 @@ function onPagesTouchStart(event: TouchEvent): void {
  * 屏幕上自然同时露出当前页和相邻页（和纸质书一样）。
  */
 function onPagesTouchMove(event: TouchEvent): void {
+  if (!pagesTouchActive) return
   if (event.touches.length !== 1) return
   const touch = event.touches[0]
   if (!touch) return
@@ -691,41 +728,83 @@ function onPagesTouchMove(event: TouchEvent): void {
   const dy = touch.clientY - touchStartY
   dragPeak = Math.max(dragPeak, Math.abs(dx))
   if (dragAxis === 'none') {
+    if (Math.abs(dy) >= DRAG_START_THRESHOLD && Math.abs(dy) > Math.abs(dx) * 1.2) {
+      dragAxis = 'vertical'
+      return
+    }
     if (Math.abs(dx) < DRAG_START_THRESHOLD) return
     if (Math.abs(dx) < Math.abs(dy) * 1.2) return
     dragAxis = 'horizontal'
     // 拖动期间关掉过渡，位移必须严格跟手。
     snapping.value = true
   }
+  if (dragAxis !== 'horizontal') return
 
   const now = performance.now()
   const elapsed = now - dragLastAt
   if (elapsed > 0) {
-    dragVelocity = (touch.clientX - dragLastX) / elapsed
+    const instantaneous = Math.max(-3, Math.min(3, (touch.clientX - dragLastX) / elapsed))
+    dragVelocity = dragVelocity * 0.35 + instantaneous * 0.65
   }
   dragLastX = touch.clientX
   dragLastAt = now
-  dragOffset.value = constrainDrag(dx)
+  dragOffset.value = constrainDrag(dragOriginOffset + dx)
 }
 
-function settleDrag(target: number): void {
+function clearPageMotion(clearQueue = true): void {
+  if (settleTimer) clearTimeout(settleTimer)
+  settleTimer = null
+  pageSettling = false
+  if (clearQueue) queuedTurn = null
+}
+
+function runQueuedTurn(): void {
+  const direction = queuedTurn
+  queuedTurn = null
+  if (direction !== null && !disposed) void turnPage(direction)
+}
+
+function settleDrag(target: number, velocity = 0): void {
+  clearPageMotion()
+  const next = clampPage(target)
+  const distance = Math.abs((next - pageIndex.value) * pageStride.value + dragOffset.value)
+  const duration = pageTurnDuration(distance, pageStride.value, velocity)
+  motionDuration.value = duration
   snapping.value = false
   dragOffset.value = 0
-  if (target !== pageIndex.value) {
-    pageIndex.value = clampPage(target)
+  if (next !== pageIndex.value) {
+    pageIndex.value = next
     syncIndicatorsFromPage()
+  }
+  if (duration > 0) {
+    pageSettling = true
+    settleTimer = setTimeout(() => {
+      settleTimer = null
+      pageSettling = false
+      runQueuedTurn()
+    }, duration)
   }
 }
 
 function onPagesTouchEnd(event: TouchEvent): void {
-  if (chapterLoading.value) return
+  if (!pagesTouchActive) return
+  pagesTouchActive = false
   const touch = event.changedTouches[0]
   if (!touch) return
   const wasDragging = dragAxis === 'horizontal'
+  const wasVertical = dragAxis === 'vertical'
   dragAxis = 'none'
   const dx = touch.clientX - touchStartX
   const dy = touch.clientY - touchStartY
   const elapsed = Date.now() - touchStartAt
+
+  if (touchDuringChapterLoad || chapterLoading.value) {
+    if (event.touches.length === 0 && Math.abs(dx) < TAP_SLOP && Math.abs(dy) < TAP_SLOP && elapsed < 500) {
+      turnPageAtClientX(touch.clientX)
+    }
+    lastFlipAt = Date.now()
+    return
+  }
 
   if (event.touches.length > 0) {
     // 多指落下，放弃这次拖动。
@@ -733,10 +812,28 @@ function onPagesTouchEnd(event: TouchEvent): void {
     return
   }
 
+  if (wasVertical) {
+    lastFlipAt = Date.now()
+    settleDrag(pageIndex.value)
+    return
+  }
+
+  // 触摸轻点统一处理，再屏蔽合成 click；连续轻点无需等待上次的抑制时间。
+  if (dragPeak < TAP_SLOP &&
+    Math.abs(dx) < TAP_SLOP && Math.abs(dy) < TAP_SLOP && elapsed < 500) {
+    const turned = turnPageAtClientX(touch.clientX)
+    if (!turned && (wasDragging || dragOriginOffset !== 0)) settleDrag(pageIndex.value)
+    lastFlipAt = Date.now()
+    return
+  }
+
   if (!wasDragging) {
     // 没有 touchmove 的合成手势（或极快的轻扫）仍按位移兜底。
-    if (elapsed > 900) return
-    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.3) return
+    if (elapsed > 900 || Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.3) {
+      lastFlipAt = Date.now()
+      if (dragOriginOffset !== 0) settleDrag(pageIndex.value)
+      return
+    }
     lastFlipAt = Date.now()
     void turnPage(dx < 0 ? 1 : -1)
     return
@@ -744,6 +841,7 @@ function onPagesTouchEnd(event: TouchEvent): void {
 
   // 手指一直没真正拖动：按点按处理，交给 click 决定左右翻页。
   if (dragPeak < TAP_SLOP) {
+    lastFlipAt = Date.now()
     settleDrag(pageIndex.value)
     return
   }
@@ -756,58 +854,64 @@ function onPagesTouchEnd(event: TouchEvent): void {
   }
 
   const offset = dragOffset.value
-  const fingerRatio = Math.abs(dx) / width
   // 手指停住再松开不算轻扫，否则慢慢拖一下也会被当成快速滑动。
   const velocity = performance.now() - dragLastAt > 100 ? 0 : dragVelocity
-  const flick = Math.abs(velocity) >= DRAG_FLICK_VELOCITY && Math.abs(dx) >= 24
-  const passed = Math.abs(offset) >= width * DRAG_TURN_RATIO || flick
-  const passedBoundary = fingerRatio >= DRAG_BOUNDARY_RATIO || flick
+  const direction = resolvePageTurn(offset, velocity, width)
 
-  if (dx < 0) {
+  if (direction > 0) {
     if (canDragToNextPage()) {
-      settleDrag(passed ? pageIndex.value + 1 : pageIndex.value)
+      settleDrag(pageIndex.value + 1, velocity)
       return
     }
-    if (canGoNext.value && passedBoundary) {
-      void turnPage(1)
+    if (canGoNext.value) {
+      void goToAdjacent(1, velocity)
       return
     }
-  } else if (dx > 0) {
+  } else if (direction < 0) {
     if (canDragToPreviousPage()) {
-      settleDrag(passed ? pageIndex.value - 1 : pageIndex.value)
+      settleDrag(pageIndex.value - 1, velocity)
       return
     }
-    if (canGoPrevious.value && passedBoundary) {
-      void turnPage(-1)
+    if (canGoPrevious.value) {
+      void goToAdjacent(-1, velocity)
       return
     }
   }
 
-  settleDrag(pageIndex.value)
+  settleDrag(pageIndex.value, velocity)
 }
 
 function onPagesTouchCancel(): void {
-  if (dragAxis !== 'horizontal') return
+  pagesTouchActive = false
+  if (dragAxis !== 'horizontal' && dragOriginOffset === 0) return
   dragAxis = 'none'
+  lastFlipAt = Date.now()
   settleDrag(pageIndex.value)
 }
 
 function onPagesClick(event: MouseEvent): void {
   if (Date.now() - lastFlipAt < 500) return
-  const selection = window.getSelection()
-  if (selection && !selection.isCollapsed) return
   const target = event.target
   if (target instanceof HTMLElement && target.closest('a, button')) return
+  turnPageAtClientX(event.clientX)
+}
+
+function turnPageAtClientX(clientX: number): boolean {
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed) return false
   const pages = pagesRef.value
-  if (!pages) return
+  if (!pages) return false
   const rect = pages.getBoundingClientRect()
-  if (rect.width === 0) return
-  const ratio = (event.clientX - rect.left) / rect.width
-  if (ratio <= 0.22) {
+  if (rect.width === 0) return false
+  const ratio = (clientX - rect.left) / rect.width
+  if (ratio <= 0.3) {
     void turnPage(-1)
-  } else if (ratio >= 0.78) {
+    return true
+  } else if (ratio >= 0.7) {
     void turnPage(1)
+    return true
   }
+  return false
 }
 
 function onReaderKeydown(event: KeyboardEvent): void {
@@ -921,6 +1025,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearPageMotion()
   document.documentElement.classList.remove('reader-open')
   disposed = true
   loadSerial += 1
@@ -968,7 +1073,9 @@ onBeforeUnmount(() => {
           <AppIcon name="arrow-left" :size="22" />
         </button>
         <div class="reader-topbar__title">
-          <span>{{ book.title }}</span>
+          <span :title="book.author ? `${book.title} · 作者：${book.author}` : book.title">
+            {{ book.title }}<template v-if="book.author"> · 作者：{{ book.author }}</template>
+          </span>
           <h1>{{ currentChapter.title }}</h1>
         </div>
         <div class="reader-topbar__actions">
@@ -1005,7 +1112,7 @@ onBeforeUnmount(() => {
       <div
         ref="pagesRef"
         class="reader-pages"
-        @touchstart.passive="onPagesTouchStart"
+        @touchstart="onPagesTouchStart"
         @touchmove.passive="onPagesTouchMove"
         @touchend="onPagesTouchEnd"
         @touchcancel="onPagesTouchCancel"

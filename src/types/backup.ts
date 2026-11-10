@@ -9,6 +9,7 @@ import type {
 export interface BackupBook {
   id: string
   title: string
+  author?: string
   format: BookFormat
   sourceFileName: string
   contentHash: string

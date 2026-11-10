@@ -21,6 +21,7 @@ const selectedFile = shallowRef<File | null>(null)
 const analysis = ref<TxtAnalysis | null>(null)
 const duplicate = ref<Book | null>(null)
 const title = ref('')
+const author = ref('')
 const customTitle = ref(false)
 const selectedEncoding = ref<EncodingChoice>('auto')
 const busy = ref(false)
@@ -71,6 +72,7 @@ function disposeAndClearFile(): void {
   selectedFile.value = null
   resetResult()
   title.value = ''
+  author.value = ''
   customTitle.value = false
   selectedEncoding.value = 'auto'
   busy.value = false
@@ -117,6 +119,7 @@ async function prepareFile(file: File): Promise<void> {
   duplicate.value = null
   error.value = ''
   title.value = defaultTitle(file.name)
+  author.value = ''
   customTitle.value = false
   selectedEncoding.value = 'auto'
 
@@ -170,6 +173,7 @@ async function confirmImport(): Promise<void> {
     const book = await saveImportedBook({
       file: selectedFile.value,
       title: title.value,
+      author: author.value,
       parsed,
       contentHash: analysis.value.contentHash,
       encoding: analysis.value.detectedEncoding,
@@ -348,6 +352,20 @@ onBeforeUnmount(() => {
             @input="markTitleCustom"
           />
           <p class="field__hint">默认使用文件名，可在导入前修改。</p>
+        </div>
+
+        <div class="field">
+          <label for="book-author">作者（选填）</label>
+          <input
+            id="book-author"
+            v-model="author"
+            type="text"
+            maxlength="80"
+            autocomplete="off"
+            :disabled="busy"
+            placeholder="输入作者或笔名"
+          />
+          <p class="field__hint">填写后会显示在书架和阅读页。</p>
         </div>
 
         <ol class="import-steps" aria-label="导入说明">

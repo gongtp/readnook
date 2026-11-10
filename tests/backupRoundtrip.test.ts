@@ -19,6 +19,7 @@ function makeBundle(contentHash: string): BookBundle {
     book: {
       id: BOOK_ID,
       title: '山雨',
+      author: '某位作者',
       format: 'txt',
       sourceFileName: '山雨.txt',
       contentHash,
@@ -133,6 +134,7 @@ describe('backup export', () => {
     expect(backup.manifest.books[0]).toMatchObject({
       id: BOOK_ID,
       title: '山雨',
+      author: '某位作者',
       contentHash: hash,
       originalPath: `books/${BOOK_ID}/original.txt`,
       originalSize: new TextEncoder().encode(ORIGINAL_TEXT).byteLength,
@@ -175,6 +177,7 @@ describe('backup reading', () => {
 
     const prepared = await readBackupArchive(await blobToFile(backup.blob))
     expect(prepared.manifest.bookCount).toBe(1)
+    expect(prepared.plan.accepted[0]?.book.author).toBe('某位作者')
     expect(prepared.plan.accepted).toHaveLength(1)
     expect(prepared.plan.skipped).toEqual([])
     expect(prepared.summary).toEqual({

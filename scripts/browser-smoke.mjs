@@ -603,6 +603,64 @@ async function main() {
       '阅读器可左右滑动翻页',
     )
 
+    const edgeDefaults = await page.locator('.reader-pages').evaluate(element => {
+      return [2, window.innerWidth - 2, window.innerWidth / 2].map(x => {
+        const touch = new Touch({ identifier: 1, target: element, clientX: x, clientY: 420 })
+        const start = new TouchEvent('touchstart', {
+          bubbles: true, cancelable: true, touches: [touch], changedTouches: [touch],
+        })
+        element.dispatchEvent(start)
+        element.dispatchEvent(new TouchEvent('touchcancel', {
+          bubbles: true, touches: [], changedTouches: [touch],
+        }))
+        return start.defaultPrevented
+      })
+    })
+    assert(
+      edgeDefaults[0] && edgeDefaults[1] && !edgeDefaults[2],
+      '左右边缘触摸在开始时阻止历史导航，正文中间触摸不被拦截',
+    )
+    const readerUrl = page.url()
+    await swipeHorizontally(2, 280)
+    await page.waitForTimeout(400)
+    const edgePreviousPage = (await page.locator('.reader-page-indicator').textContent())?.trim()
+    assert(edgePreviousPage !== swipedPage?.trim(), '左缘右滑仍可翻到上一页')
+    await swipeHorizontally(388, 70)
+    await page.waitForTimeout(400)
+    assert(
+      (await page.locator('.reader-page-indicator').textContent())?.trim() === swipedPage?.trim()
+        && page.url() === readerUrl,
+      '右缘左滑仍可翻到下一页，左右边缘滑动不改变阅读路由',
+    )
+    await dragTouch('touchstart', 2)
+    await dragTouch('touchend', 2)
+    await page.waitForTimeout(400)
+    assert(
+      (await page.locator('.reader-page-indicator').textContent())?.trim() === edgePreviousPage,
+      '拦截边缘历史导航后，左缘轻点仍可翻到上一页',
+    )
+    await dragTouch('touchstart', 388)
+    await dragTouch('touchend', 388)
+    await page.waitForTimeout(400)
+    assert(
+      (await page.locator('.reader-page-indicator').textContent())?.trim() === swipedPage?.trim(),
+      '拦截边缘历史导航后，右缘轻点仍可翻到下一页',
+    )
+    await page.locator('.reader-pages__viewport > .reader-article .chapter-text').evaluate(element => {
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(range)
+    })
+    await dragTouch('touchstart', 2)
+    await dragTouch('touchend', 2)
+    await page.waitForTimeout(400)
+    assert(
+      (await page.locator('.reader-page-indicator').textContent())?.trim() === swipedPage?.trim(),
+      '选中文字时边缘轻点不会误翻页',
+    )
+    await page.evaluate(() => window.getSelection()?.removeAllRanges())
+
     // 跟手翻页：手指按住时页面跟着移动，两页同时可见；往回拖可以取消。
     const pageBeforeDrag = (await page.locator('.reader-page-indicator').textContent())?.trim()
     const articleWidth = await page
@@ -677,6 +735,80 @@ async function main() {
         pageBeforeDrag,
       '拖动翻页后可以用方向键回到原页',
     )
+
+    // 拖过门槛后往回收手，不能再只根据总位移强制向前翻。
+    await dragTouch('touchstart', 330)
+    for (const x of [290, 250, 210, 170, 150, 175, 205]) {
+      await dragTouch('touchmove', x)
+      await page.waitForTimeout(16)
+    }
+    await dragTouch('touchend', 205)
+    await page.waitForTimeout(420)
+    assert(
+      (await page.locator('.reader-page-indicator').textContent())?.trim() === pageBeforeDrag,
+      '拖过翻页门槛后往回收手，松手仍可取消翻页',
+    )
+
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(40)
+    const caughtMotion = await page.locator('.reader-pages').evaluate(async element => {
+      const article = element.querySelector('.reader-pages__viewport > .reader-article')
+      const x = () => new DOMMatrixReadOnly(getComputedStyle(article).transform).m41
+      const before = x()
+      const touch = new Touch({ identifier: 1, target: element, clientX: 210, clientY: 420 })
+      element.dispatchEvent(new TouchEvent('touchstart', {
+        bubbles: true, cancelable: true, touches: [touch], changedTouches: [touch],
+      }))
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      return { before, after: x(), page: element.querySelector('.reader-page-indicator').textContent.trim() }
+    })
+    assert(Math.abs(caughtMotion.after - caughtMotion.before) < 2, '动画中再次触摸接住当前画面，不跳到终点')
+    await dragTouch('touchend', 210)
+    await page.waitForTimeout(420)
+    assert(
+      (await page.locator('.reader-page-indicator').textContent())?.trim() === caughtMotion.page,
+      '接住动画后在中央松手，吸附到最近的一页',
+    )
+
+    const beforeVerticalDrag = (await page.locator('.reader-page-indicator').textContent())?.trim()
+    await page.locator('.reader-pages').evaluate(element => {
+      for (const [type, x, y] of [['touchstart', 260, 400], ['touchmove', 265, 470], ['touchmove', 100, 475], ['touchend', 100, 475]]) {
+        const touch = new Touch({ identifier: 1, target: element, clientX: x, clientY: y })
+        element.dispatchEvent(new TouchEvent(type, {
+          bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch], changedTouches: [touch],
+        }))
+      }
+    })
+    await page.waitForTimeout(420)
+    assert(
+      (await page.locator('.reader-page-indicator').textContent())?.trim() === beforeVerticalDrag,
+      '先纵向移动再横移不会误触翻页',
+    )
+
+    const beforeRapidTap = Number(beforeVerticalDrag.split('/')[0])
+    const rapidTapTotal = Number(beforeVerticalDrag.split('/')[1])
+    const rapidTapChapter = new URL(page.url()).hash
+    await dragTouch('touchstart', 330)
+    await dragTouch('touchend', 330)
+    await page.waitForTimeout(80)
+    await dragTouch('touchstart', 330)
+    await dragTouch('touchend', 330)
+    await page.waitForTimeout(600)
+    const afterRapidTap = Number((await page.locator('.reader-page-indicator').textContent()).split('/')[0])
+    const expectedRapidPage = beforeRapidTap + 2
+    assert(
+      expectedRapidPage <= rapidTapTotal
+        ? afterRapidTap === expectedRapidPage && new URL(page.url()).hash === rapidTapChapter
+        : afterRapidTap === expectedRapidPage - rapidTapTotal && new URL(page.url()).hash !== rapidTapChapter,
+      '连续轻点两次依次翻两页，跨章时也不吞掉第二次操作',
+    )
+
+    // 回到原来的第一章第 2 页，继续验证既有的进度和书签恢复场景。
+    await page.getByRole('button', { name: '打开目录' }).click()
+    await page.locator('.toc-item').filter({ hasText: '第一章 雾起' }).click()
+    await page.locator('.reader-shell[aria-busy="false"]').waitFor()
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(420)
 
     const pagedPercent = await page.locator('.reader-pages__viewport > article .chapter-heading__meta').textContent()
     assert(

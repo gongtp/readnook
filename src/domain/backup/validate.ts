@@ -221,6 +221,9 @@ function validateBook(
     : []
 
   const title = requireString(value.title, `books[${index}].title`, 200)
+  const author = value.author === undefined || value.author === ''
+    ? undefined
+    : requireString(value.author, `books[${index}].author`, 80)
   const sourceFileName = requireString(
     value.sourceFileName,
     `books[${index}].sourceFileName`,
@@ -230,6 +233,7 @@ function validateBook(
   return {
     id,
     title,
+    author,
     format: 'txt',
     sourceFileName,
     contentHash: contentHash.toLowerCase(),

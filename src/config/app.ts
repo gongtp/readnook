@@ -3,7 +3,7 @@ export const APP_VERSION = __APP_VERSION__
 export const APP_BUILD_TIME = __APP_BUILD_TIME__
 export const DB_NAME = 'ReadNookDB'
 export const DB_VERSION = 1
-export const PARSER_VERSION = 1
+export const PARSER_VERSION = 2
 
 export const MAX_TXT_BYTES = 30 * 1024 * 1024
 export const MAX_BACKUP_ARCHIVE_BYTES = 200 * 1024 * 1024

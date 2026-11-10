@@ -36,9 +36,61 @@ describe('isChapterTitle', () => {
       expect(isChapterTitle(line), line).toBe(false)
     }
   })
+
+  it.each([
+    '　　第一章起源', '第 １２ 章　起源', '第壹佰零壹章重逢',
+    '第兩百節 歸途', '卷一 起源', '卷一重逢', '第二卷 第一章 起源',
+    '正文 第一章起源', '正文：第1章 起源', '正文第一章起源',
+    '【第一章 起源】', '（第一章起源）', '[Chapter 1: Origin]',
+    '1. 起源', '１．起源', '001 起源', '1、起源', '一、起源', '十二：归途',
+    '1 — 起源', '【001】起源', '（一）起源', '[12] 起源',
+    'Chapter 1', 'CHAPTER 12: Origin', 'Chapter IV The Beginning',
+    'Ch. 3 - Return', 'Part II', 'Book 1: Origin', 'Volume 2 Return', 'Vol. III',
+    'Section 1: Origin', 'Prologue', 'Epilogue: Home', 'Preface', 'Afterword',
+    '前言', '序幕 起源', '序', '後記', '尾聲', '附录：人物表',
+    '番外篇二 重逢', '外传 起源', '番外1', '　　番外2', '番外１', '番外1 重逢',
+  ])('recognizes additional heading format: %s', (heading) => {
+    expect(isChapterTitle(heading)).toBe(true)
+  })
+
+  it.each([
+    '第一章讲述了他的经历。', '他读到了 Chapter 1', 'Chapter One day',
+    'Chapter introduction', 'Chapter 1st encounter', '1.23', '3.14159 圆周率',
+    '一 个普通人', '2026年11月10日', '123', '后记得关门', '序幕拉开了。',
+    '【普通正文】', '正文只是一个普通句子',
+  ])('does not treat prose or numeric values as headings: %s', (line) => {
+    expect(isChapterTitle(line)).toBe(false)
+  })
 })
 
 describe('parseTxtChapters', () => {
+  it('keeps numbered extras separate from the main chapters', () => {
+    const parsed = parseTxtChapters([
+      '第一章起源', '正文内容',
+      '第二章恶魔', '正文结尾',
+      '　　番外1', '番外第一段', '番外第二段',
+      '番外2', '另一篇番外',
+    ].join('\n'))
+
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual([
+      '第一章起源', '第二章恶魔', '番外1', '番外2',
+    ])
+    expect(parsed.chapters.map((chapter) => chapter.content)).toEqual([
+      '正文内容', '正文结尾', '番外第一段\n番外第二段', '另一篇番外',
+    ])
+    expect(new Set(parsed.chapters.map((chapter) => chapter.chapterKey)).size).toBe(4)
+    expect(parsed.chapters.every((chapter) => !chapter.autoSplit)).toBe(true)
+  })
+
+  it('splits mixed heading styles and preserves the original titles', () => {
+    const titles = ['　　第一章起源', '【第二章 重逢】', '3. 归途', 'Chapter IV: Home', '後記']
+    const text = titles.map((title, index) => `${title}\n内容${index}`).join('\n\n')
+    const parsed = parseTxtChapters(text)
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual(titles.map((title) => title.trim()))
+    expect(parsed.chapters.map((chapter) => chapter.content)).toEqual(titles.map((_, index) => `内容${index}`))
+    expect(parsed.chapters.every((chapter) => !chapter.autoSplit)).toBe(true)
+  })
+
   it('keeps front matter and splits at chapter headings', () => {
     const text = [
       '书名：山雨',
