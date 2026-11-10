@@ -387,11 +387,28 @@ async function main() {
     await page.locator('dialog[open]').waitFor({ state: 'visible' })
     const dialogLock = await page.evaluate(() => {
       const dialog = document.querySelector('dialog[open]')
+      const body = dialog?.querySelector('.app-dialog__body')
+      const panel = dialog?.querySelector('.app-dialog__panel')
+      const dialogStyle = dialog ? getComputedStyle(dialog) : null
+      const bodyStyle = body ? getComputedStyle(body) : null
+      const rect = (element) => (element ? element.getBoundingClientRect() : null)
+      const dialogRect = rect(dialog)
+      const panelRect = rect(panel)
       return {
         dialogOpen: document.documentElement.classList.contains('dialog-open'),
         bodyPosition: getComputedStyle(document.body).position,
-        dialogOverflow: dialog ? getComputedStyle(dialog).overflow : '',
+        dialogOverflow: dialogStyle?.overflow ?? '',
+        dialogPosition: dialogStyle?.position ?? '',
+        dialogBottom: dialogRect ? Math.round(dialogRect.bottom) : null,
+        dialogTop: panelRect ? panelRect.top : null,
         bodyOverscroll: getComputedStyle(document.body).overscrollBehavior,
+        bodyOverflowX: bodyStyle?.overflowX ?? '',
+        bodyOverflowY: bodyStyle?.overflowY ?? '',
+        bodyTouchAction: bodyStyle?.touchAction ?? '',
+        bodyScrollWidth: body?.scrollWidth ?? 0,
+        bodyClientWidth: body?.clientWidth ?? 0,
+        bodyScrollLeft: body?.scrollLeft ?? 0,
+        viewportHeight: window.innerHeight,
       }
     })
     assert(
@@ -401,6 +418,73 @@ async function main() {
         dialogLock.bodyOverscroll === 'none',
       '打开目录时整页被固定，面板不会跟着手势整体移动',
     )
+    assert(
+      dialogLock.dialogPosition === 'fixed' &&
+        dialogLock.dialogBottom === dialogLock.viewportHeight,
+      '目录面板固定在视口底边（position: fixed），不会被上下拖动',
+    )
+    assert(
+      dialogLock.bodyOverflowX === 'hidden' &&
+        dialogLock.bodyOverflowY === 'auto' &&
+        dialogLock.bodyTouchAction === 'pan-y' &&
+        dialogLock.bodyScrollWidth <= dialogLock.bodyClientWidth + 1 &&
+        dialogLock.bodyScrollLeft === 0,
+      '目录内容区只能纵向滚动，没有横向溢出',
+    )
+
+    // 在目录列表上横向拖一下：面板和列表都不能被推走。
+    const tocDragRect = await page
+      .locator('dialog[open] .app-dialog__body')
+      .boundingBox()
+    const dialogDragBefore = await page.evaluate(() => {
+      const dialog = document.querySelector('dialog[open]')
+      const panel = dialog?.querySelector('.app-dialog__panel')?.getBoundingClientRect()
+      const list = dialog?.querySelector('.toc-list')?.getBoundingClientRect()
+      return { panelTop: panel?.top, panelLeft: panel?.left, listLeft: list?.left }
+    })
+    if (tocDragRect) {
+      const y = tocDragRect.y + Math.min(120, tocDragRect.height / 2)
+      await page.locator('dialog[open] .app-dialog__body').evaluate(
+        (element, [startX, endX, clientY]) => {
+          const point = (x) =>
+            new Touch({ identifier: 1, target: element, clientX: x, clientY })
+          const fire = (type, touch, active) =>
+            element.dispatchEvent(
+              new TouchEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                touches: active ? [touch] : [],
+                changedTouches: [touch],
+              }),
+            )
+          fire('touchstart', point(startX), true)
+          for (let step = 1; step <= 6; step += 1) {
+            fire('touchmove', point(startX + ((endX - startX) * step) / 6), true)
+          }
+          fire('touchend', point(endX), false)
+        },
+        [tocDragRect.x + tocDragRect.width - 40, tocDragRect.x + 40, y],
+      )
+      await page.waitForTimeout(300)
+      const dialogDragAfter = await page.evaluate(() => {
+        const dialog = document.querySelector('dialog[open]')
+        const panel = dialog?.querySelector('.app-dialog__panel')?.getBoundingClientRect()
+        const list = dialog?.querySelector('.toc-list')?.getBoundingClientRect()
+        return {
+          panelTop: panel?.top,
+          panelLeft: panel?.left,
+          listLeft: list?.left,
+          scrollLeft: dialog?.querySelector('.app-dialog__body')?.scrollLeft ?? 0,
+        }
+      })
+      assert(
+        dialogDragAfter.panelTop === dialogDragBefore.panelTop &&
+          dialogDragAfter.panelLeft === dialogDragBefore.panelLeft &&
+          dialogDragAfter.listLeft === dialogDragBefore.listLeft &&
+          dialogDragAfter.scrollLeft === 0,
+        '在目录上横向拖动时面板和列表都不位移，只有纵向能滚',
+      )
+    }
     await page.fill('.toc-search__input', '第二章')
     await page.waitForTimeout(300)
     const filteredCount = await page.locator('.toc-item').count()
@@ -471,6 +555,34 @@ async function main() {
     assert(
       (firstPage?.trim() ?? '') !== (secondPage?.trim() ?? ''),
       '阅读器可用方向键左右翻页',
+    )
+
+    // 分页几何：两页之间必须留出空白，翻页位移 = 页宽 + 留白。
+    const pagination = await page.evaluate(() => {
+      const article = document.querySelector('.reader-article')
+      if (!article) return null
+      const style = getComputedStyle(article)
+      const matrix = new DOMMatrixReadOnly(style.transform)
+      const indicator =
+        document.querySelector('.reader-page-indicator')?.textContent?.trim() ?? ''
+      const [current, total] = indicator.split(/\s*\/\s*/).map(Number)
+      return {
+        width: article.clientWidth,
+        gap: Number.parseFloat(style.columnGap) || 0,
+        scrollWidth: article.scrollWidth,
+        translateX: Math.round(matrix.m41),
+        current,
+        total,
+      }
+    })
+    const pageStride = (pagination?.width ?? 0) + (pagination?.gap ?? 0)
+    assert(
+      Boolean(pagination) &&
+        pagination.gap > 0 &&
+        pagination.total > 1 &&
+        Math.abs(pagination.translateX + (pagination.current - 1) * pageStride) <= 1 &&
+        pagination.scrollWidth === pagination.total * pageStride - pagination.gap,
+      `相邻两页之间留出 ${pagination?.gap}px 空白，翻页按「页宽 + 留白」整页位移`,
     )
 
     await page.keyboard.press('ArrowLeft')

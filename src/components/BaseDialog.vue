@@ -20,6 +20,7 @@ const emit = defineEmits<{
 }>()
 
 const dialogRef = ref<HTMLDialogElement | null>(null)
+const bodyRef = ref<HTMLElement | null>(null)
 const titleId = `dialog-title-${createId()}`
 
 let scrollLocked = false
@@ -35,6 +36,14 @@ function requestClose(): void {
   emit('update:open', false)
 }
 
+/**
+ * 弹层里的内容只允许纵向滚动。iOS 在弹出瞬间会因为聚焦或布局抖动
+ * 把滚动容器横向挪动几个像素，表现为整块列表被推到左边；这里强制归零。
+ */
+function resetHorizontalScroll(): void {
+  const body = bodyRef.value
+  if (body && body.scrollLeft !== 0) body.scrollLeft = 0
+}
 watch(
   () => props.open,
   async (open) => {
@@ -44,6 +53,8 @@ watch(
     if (open && !dialog.open) {
       dialog.showModal()
       applyScrollLock(true)
+      resetHorizontalScroll()
+      requestAnimationFrame(resetHorizontalScroll)
     } else if (!open && dialog.open) {
       dialog.close()
       applyScrollLock(false)
@@ -95,7 +106,7 @@ onBeforeUnmount(() => {
         <div v-if="$slots.subheader" class="app-dialog__subheader">
           <slot name="subheader" />
         </div>
-        <div class="app-dialog__body">
+        <div ref="bodyRef" class="app-dialog__body" @scroll="resetHorizontalScroll">
           <slot />
         </div>
         <footer v-if="$slots.footer" class="app-dialog__footer">

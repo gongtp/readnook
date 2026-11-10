@@ -21,21 +21,22 @@ function rangeRectAt(node: Text, offset: number): DOMRect | null {
 
 /**
  * 分页模式下文本按列横向排布：同一列的字符共享列左边界，
- * 因此“字符所在列”等于它与正文起始左边界之间的距离除以页宽。
+ * 因此“字符所在列”等于它与正文起始左边界之间的距离除以页间距。
+ * 页间距 = 页宽 + 页与页之间的留白（column-gap），留白不会被算进某一句正文里。
  */
 export function pageOfOffset(
   root: HTMLElement,
   article: HTMLElement,
   offset: number,
-  pageWidth: number,
+  pageStride: number,
 ): number {
-  if (pageWidth <= 0) return 0
+  if (pageStride <= 0) return 0
   const node = textNodeOf(root)
   if (!node) return 0
   const rect = rangeRectAt(node, offset)
   if (!rect) return 0
   const articleLeft = article.getBoundingClientRect().left
-  return Math.max(0, Math.floor((rect.left - articleLeft) / pageWidth))
+  return Math.max(0, Math.floor((rect.left - articleLeft) / pageStride))
 }
 
 /** 二分查找某一页第一个字符的偏移，依赖 pageOfOffset 随偏移单调不减。 */
@@ -43,7 +44,7 @@ export function offsetOfPage(
   root: HTMLElement,
   article: HTMLElement,
   page: number,
-  pageWidth: number,
+  pageStride: number,
 ): number {
   const node = textNodeOf(root)
   if (!node) return 0
@@ -55,7 +56,7 @@ export function offsetOfPage(
   let found = length
   while (low <= high) {
     const middle = (low + high) >> 1
-    const current = pageOfOffset(root, article, middle, pageWidth)
+    const current = pageOfOffset(root, article, middle, pageStride)
     if (current >= page) {
       found = middle
       high = middle - 1
@@ -66,9 +67,14 @@ export function offsetOfPage(
   return found === length ? length - 1 : found
 }
 
-/** 列布局下正文的横向总宽是页宽的整数倍，向上取整可容忍亚像素误差。 */
-export function countPages(article: HTMLElement): number {
+/**
+ * 列布局下正文总宽 = 页数 × 页宽 + (页数 − 1) × 页间距留白，
+ * 换算回页数时要先把最后一段留白补上，再除以整页间距。
+ */
+export function countPages(article: HTMLElement, gutter = 0): number {
   const width = article.clientWidth
   if (width <= 0) return 1
-  return Math.max(1, Math.round(article.scrollWidth / width))
+  const stride = width + gutter
+  if (stride <= 0) return 1
+  return Math.max(1, Math.round((article.scrollWidth + gutter) / stride))
 }

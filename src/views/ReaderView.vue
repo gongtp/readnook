@@ -83,6 +83,14 @@ const chapterSwapping = ref(false)
 /** 跟手翻页时手指带来的额外位移（px，左负右正）。 */
 const dragOffset = ref(0)
 
+/**
+ * 相邻两页之间留一条空白，跟手翻页时两页不会贴成一行字。
+ * 取两倍的页边距，正好等于“两页各自的内边距”。
+ */
+const pageGutter = computed(() => Math.max(0, settingsStore.settings.pageMargin * 2))
+/** 一页占的横向距离 = 页宽 + 页间留白。 */
+const pageStride = computed(() => pageWidth.value + pageGutter.value)
+
 let reflowTimer: ReturnType<typeof setTimeout> | null = null
 let chapterSwapTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
@@ -98,8 +106,9 @@ let dragVelocity = 0
 let dragPeak = 0
 
 const articleStyle = computed(() => ({
-  transform: `translateX(${-pageIndex.value * pageWidth.value + dragOffset.value}px)`,
+  transform: `translateX(${-pageIndex.value * pageStride.value + dragOffset.value}px)`,
   columnWidth: pageWidth.value > 0 ? `${pageWidth.value}px` : undefined,
+  columnGap: `${pageGutter.value}px`,
 }))
 
 const currentBookPercent = computed(() => toProgressPercent(currentBookProgress.value))
@@ -221,12 +230,12 @@ async function paginateAt(offset: number): Promise<void> {
     // column-width 落到样式上才能量出真实列宽；仍是同一帧内的微任务。
     await nextTick()
   }
-  if (width > 0) pageCount.value = countPages(article)
+  if (width > 0) pageCount.value = countPages(article, pageGutter.value)
 
   const safeOffset = clampCharOffset(offset, currentChapter.value?.charCount ?? 0)
   const page =
     pageWidth.value > 0
-      ? pageOfOffset(text, article, safeOffset, pageWidth.value)
+      ? pageOfOffset(text, article, safeOffset, pageStride.value)
       : 0
   pageIndex.value = clampPage(page)
   updateIndicators(safeOffset)
@@ -241,7 +250,7 @@ function pageOffsetAt(index: number): number {
   const article = articleRef.value
   const text = chapterTextRef.value
   if (!article || !text) return 0
-  return offsetOfPage(text, article, index, pageWidth.value)
+  return offsetOfPage(text, article, index, pageStride.value)
 }
 
 function syncIndicatorsFromPage(): void {
