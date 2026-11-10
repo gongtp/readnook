@@ -254,6 +254,8 @@ function validateBook(
       `books[${index}].lastReadAt`,
     ),
     originalPath,
+    lastOpenedAt: value.lastOpenedAt === undefined ? undefined :
+      requireTimestamp(value.lastOpenedAt, `books[${index}].lastOpenedAt`),
     originalSize,
     progress,
     bookmarks,

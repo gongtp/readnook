@@ -20,6 +20,7 @@ export interface BackupBook {
   parseWarnings: string[]
   importedAt: number
   lastReadAt: number
+  lastOpenedAt?: number
   originalPath: string
   originalSize: number
   progress: ReadingProgress | null

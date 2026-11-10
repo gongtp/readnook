@@ -102,6 +102,7 @@ export async function saveImportedBook(
     parseWarnings: input.parsed.warnings,
     importedAt: now,
     lastReadAt: now,
+    lastOpenedAt: 0,
     updatedAt: now,
   }
   const fileRow: BookFile = {

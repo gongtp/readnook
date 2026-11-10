@@ -85,10 +85,17 @@ const totalCharsLabel = computed(() => {
 })
 
 const continueEntry = computed(() => {
-  const reading = entries.value.find(
-    (entry) => entry.status === 'reading',
-  )
-  return reading ?? entries.value[0] ?? null
+  let latest: ShelfItem | null = null
+  let latestTime = 0
+  for (const entry of entries.value) {
+    const openedAt = entry.book.lastOpenedAt ??
+      (entry.status === 'unread' ? 0 : entry.book.lastReadAt)
+    if (openedAt > latestTime) {
+      latestTime = openedAt
+      latest = entry
+    }
+  }
+  return latest ?? entries.value[0] ?? null
 })
 
 const filterOptions = computed(
@@ -131,14 +138,12 @@ const remainingEntries = computed(
 
 const resumeLabel = computed(() => {
   const status = continueEntry.value?.status
-  if (status === 'finished') return '再读一遍'
-  return status === 'reading' ? '继续阅读' : '从第一本开始'
+  return status === 'unread' ? '从第一本开始' : '继续阅读'
 })
 
 const resumeActionLabel = computed(() => {
   const status = continueEntry.value?.status
-  if (status === 'finished') return '重新打开'
-  return status === 'reading' ? '接着上次读' : '打开这本书'
+  return status === 'unread' ? '打开这本书' : '接着上次读'
 })
 
 watch([search, sort, shelfFilter], () => {

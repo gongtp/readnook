@@ -853,6 +853,12 @@ async function main() {
       '',
       '第二章 风停',
       '故事停在这里，但本地数据还在。'.repeat(60),
+      ...Array.from({ length: 96 }, (_, index) =>
+        `第${index + 3}章 旅途\n${'路上的故事。'.repeat(450)}`),
+      '第99章 归途',
+      '就快到家了。',
+      '第100章 终章',
+      '灯火就在前方。'.repeat(110),
     ].join('\n')
     await page.setInputFiles('#txt-file-input', {
       name: '离线小记.txt',
@@ -915,6 +921,41 @@ async function main() {
       '从章首翻回上一章直接落在上一章最后一页',
     )
 
+    async function checkShelfState(reading, finished, percent, label) {
+      await page.getByRole('button', { name: '返回书架' }).first().click()
+      await waitForText('.resume-card__copy h2', '离线小记')
+      const group = page.getByRole('group', { name: '按阅读状态筛选' })
+      for (const [name, count] of [['全部', 2], ['未读', 0], ['在读', reading], ['已读完', finished]]) {
+        const chip = group.getByRole('button', { name: new RegExp(`^${name}`) })
+        assert(Number(await chip.locator('span').textContent()) === count, `${label}：${name}计数为 ${count}`)
+        await chip.click()
+        const present = name === '全部' || name === (finished ? '已读完' : '在读')
+        assert(await earlyCard.count() === Number(present), `${label}：${name}筛选正确`)
+      }
+      await group.getByRole('button', { name: /^全部/ }).click()
+      const expected = finished ? '已读完' : `已读 ${percent}%`
+      assert((await earlyCard.locator('.book-card__percent').textContent()).trim() === expected &&
+        (await page.locator('.resume-card__percent').textContent()).trim() === `${percent}%` &&
+        (await page.locator('.resume-card__eyebrow').textContent()).trim() === '继续阅读',
+        `${label}：卡片与继续阅读状态一致`)
+      await page.locator('.resume-card__link').click()
+      await page.locator('.reader-shell[aria-busy="false"] .reader-page-indicator').waitFor()
+    }
+
+    await page.getByRole('button', { name: '打开目录' }).click()
+    await page.fill('.toc-search__input', '99')
+    await page.locator('.toc-item').filter({ hasText: '第99章 归途' }).click()
+    await waitForText('.reader-topbar h1', '第99章 归途')
+    await checkShelfState(2, 0, 99, '第99章实际进度超过99.5%')
+    await page.keyboard.press('ArrowRight')
+    await waitForText('.reader-topbar h1', '第100章 终章')
+    const finalStart = await readReaderState()
+    assert(/^1\s*\/\s*[2-9]/.test(finalStart.indicator), '末章分多页，第一页尚未读完')
+    await checkShelfState(2, 0, 99, '末章第一页')
+    const lastPage = await turnUntilChapterEnd()
+    await checkShelfState(1, 1, 100, '末章最后一页')
+    assert((await readReaderState()).indicator === lastPage.indicator, '从继续阅读重新打开已读完书籍，恢复末页')
+
     await page.getByRole('button', { name: '返回书架' }).first().click()
     await page.locator('.bookshelf-page').waitFor({ state: 'visible' })
     await page.waitForFunction(
@@ -965,6 +1006,8 @@ async function main() {
           .length === 3,
     )
     assert(true, 'GBK 书籍导入后书架共有三本书')
+    await waitForText('.resume-card__copy h2', '编码测试')
+    assert(true, '打开另一本书后，继续阅读切换到刚看的书')
 
     await page.getByRole('link', { name: '导入', exact: true }).first().click()
     await page.locator('#txt-file-input').waitFor({ state: 'attached' })
@@ -1019,6 +1062,19 @@ async function main() {
       { timeout: 20_000 },
     )
     assert(true, '继续下滑可加载全部 33 本（含 3 本导入书）')
+    await waitForText('.resume-card__copy h2', '编码测试')
+    await page.getByRole('button', { name: /^未读/ }).click()
+    const unreadCard = page.locator('.book-card').first()
+    assert((await unreadCard.locator('.book-card__percent').textContent()).trim() === '未开始',
+      '仅导入的书籍显示未开始，生成示例书不会顶替最后看的书')
+    const unreadTitle = (await unreadCard.locator('.book-card__title').textContent()).trim()
+    await unreadCard.locator('.book-card__title').click()
+    await page.locator('.reader-shell[aria-busy="false"] .reader-page-indicator').waitFor()
+    await page.getByRole('button', { name: '返回书架' }).first().click()
+    await waitForText('.resume-card__copy h2', unreadTitle)
+    await page.getByRole('button', { name: /^在读/ }).click()
+    assert(await page.locator('.book-card').filter({ hasText: unreadTitle }).count() === 1,
+      '打开未读书后转入在读，并成为最后看的书')
 
     await page.goto(`${appUrl}#/settings`, { waitUntil: 'domcontentloaded' })
     await waitForText('#demo-heading', '演示书籍')

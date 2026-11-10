@@ -101,7 +101,8 @@ export function resolveResumeLocation(
 }
 
 export function toProgressPercent(bookProgress: number): number {
-  return Math.round(clampProgressRatio(bookProgress) * 100)
+  const ratio = clampProgressRatio(bookProgress)
+  return ratio === 1 ? 100 : Math.min(99, Math.round(ratio * 100))
 }
 
 export function isValidProgress(

@@ -71,6 +71,7 @@ function toBackupBook(
     parseWarnings: book.parseWarnings,
     importedAt: book.importedAt,
     lastReadAt: book.lastReadAt,
+    lastOpenedAt: book.lastOpenedAt,
     originalPath: `books/${book.id}/original.txt`,
     originalSize: book.byteSize,
     progress: progress ?? null,
@@ -391,6 +392,7 @@ export async function executeBackupRestore(
         parseWarnings: parsed.warnings,
         importedAt: backupBook.importedAt,
         lastReadAt: backupBook.lastReadAt,
+        lastOpenedAt: backupBook.lastOpenedAt,
         updatedAt: now,
       }
       const fileRow: BookFile = {

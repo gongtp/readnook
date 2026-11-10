@@ -175,7 +175,7 @@ export async function touchBookReadTime(
   now = Date.now(),
   database: ReadNookDatabase = db,
 ): Promise<void> {
-  await database.books.update(bookId, { lastReadAt: now })
+  await database.books.update(bookId, { lastReadAt: now, lastOpenedAt: now })
 }
 
 export async function saveBookBundle(

@@ -208,7 +208,9 @@ function updateIndicators(offset: number): void {
   const activeBook = book.value
   if (!chapter || !activeBook) return
 
-  const safeOffset = clampCharOffset(offset, chapter.charCount)
+  const atBookEnd = pageWidth.value > 0 && chapter.order === chapters.value.length - 1 &&
+    pageIndex.value === pageCount.value - 1
+  const safeOffset = atBookEnd ? chapter.charCount : clampCharOffset(offset, chapter.charCount)
   lastKnownOffset.value = safeOffset
   currentChapterProgress.value = calculateChapterProgress(
     safeOffset,

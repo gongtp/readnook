@@ -27,6 +27,7 @@ export interface Book {
   parseWarnings: string[]
   importedAt: number
   lastReadAt: number
+  lastOpenedAt?: number
   updatedAt: number
 }
 
