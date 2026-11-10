@@ -1,4 +1,5 @@
 import { buildReadingProgress } from '@/domain/progress'
+import { countFrontMatterChapters } from '@/domain/books/frontMatter'
 import {
   getBookByContentHash,
   saveBookBundle,
@@ -96,6 +97,7 @@ export async function saveImportedBook(
     encoding: input.encoding,
     totalChars: input.parsed.totalChars,
     chapterCount: input.parsed.chapters.length,
+    frontMatterCount: countFrontMatterChapters(input.parsed.chapters),
     parserVersion: input.parsed.parserVersion,
     parseWarnings: input.parsed.warnings,
     importedAt: now,

@@ -1,26 +1,20 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRegisterSW } from 'virtual:pwa-register/vue'
 import AppIcon from '@/components/AppIcon.vue'
-import { flushReadingProgress } from '@/services/readingProgress'
+import { useAppUpdateStore } from '@/stores/appUpdate'
 import { useToastStore } from '@/stores/toast'
 
 const toast = useToastStore()
+const update = useAppUpdateStore()
 const dismissed = ref(false)
 const updating = ref(false)
-let registration: ServiceWorkerRegistration | undefined = undefined
-let lastUpdateCheck = Date.now()
 
-const { needRefresh, updateServiceWorker } = useRegisterSW({
-  immediate: true,
-  onRegisteredSW(_swUrl: string, swRegistration?: ServiceWorkerRegistration) {
-    registration = swRegistration
+watch(
+  () => update.needRefresh,
+  (value) => {
+    if (value) dismissed.value = false
   },
-})
-
-watch(needRefresh, (value) => {
-  if (value) dismissed.value = false
-})
+)
 
 function dismiss(): void {
   dismissed.value = true
@@ -30,8 +24,7 @@ async function updateNow(): Promise<void> {
   if (updating.value) return
   updating.value = true
   try {
-    await flushReadingProgress()
-    await updateServiceWorker(true)
+    await update.applyUpdate()
   } catch (error) {
     console.error('ReadNook: 更新应用失败', error)
     toast.error('更新没有完成，请检查网络后再试。当前版本仍可继续阅读。')
@@ -39,25 +32,22 @@ async function updateNow(): Promise<void> {
   }
 }
 
-function checkForUpdates(): void {
-  if (document.visibilityState !== 'visible') return
-  if (Date.now() - lastUpdateCheck < 60 * 60 * 1000) return
-  lastUpdateCheck = Date.now()
-  void registration?.update()
+function onVisibilityChange(): void {
+  update.maybeCheckForUpdate()
 }
 
 onMounted(() => {
-  document.addEventListener('visibilitychange', checkForUpdates)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('visibilitychange', checkForUpdates)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 </script>
 
 <template>
   <aside
-    v-if="needRefresh && !dismissed"
+    v-if="update.needRefresh && !dismissed"
     class="update-banner"
     role="status"
     aria-live="polite"

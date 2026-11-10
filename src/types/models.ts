@@ -21,6 +21,8 @@ export interface Book {
   encoding: TextEncoding
   totalChars: number
   chapterCount: number
+  /** 排在最前面、不参与章节编号的前置章节数量（“开篇”）。旧书可能没有该字段。 */
+  frontMatterCount?: number
   parserVersion: number
   parseWarnings: string[]
   importedAt: number

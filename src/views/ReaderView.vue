@@ -28,6 +28,11 @@ import {
   resolveResumeLocation,
   toProgressPercent,
 } from '@/domain/progress'
+import {
+  countFrontMatterChapters,
+  displayChapterNumber,
+  isFrontMatterChapter,
+} from '@/domain/books/frontMatter'
 import { flushReadingProgress, scheduleProgress } from '@/services/readingProgress'
 import { useReaderSettingsStore } from '@/stores/readerSettings'
 import { useToastStore } from '@/stores/toast'
@@ -37,7 +42,7 @@ import type {
   ChapterMeta,
   ReadingProgress,
 } from '@/types/models'
-import { findVisibleTextOffset, scrollToTextOffset } from '@/utils/domPosition'
+import { countPages, offsetOfPage, pageOfOffset } from '@/utils/domPosition'
 import { createId } from '@/utils/id'
 import { formatRelativeTime } from '@/utils/format'
 import { getErrorMessage } from '@/utils/errors'
@@ -59,20 +64,34 @@ const error = ref('')
 const lastKnownOffset = ref(0)
 const currentChapterProgress = ref(0)
 const currentBookProgress = ref(0)
-const atChapterEnd = ref(false)
 const tocOpen = ref(false)
+const tocQuery = ref('')
 const bookmarksOpen = ref(false)
 const settingsOpen = ref(false)
 
-const scrollRef = ref<HTMLElement | null>(null)
+const pagesRef = ref<HTMLElement | null>(null)
+const articleRef = ref<HTMLElement | null>(null)
 const chapterTextRef = ref<HTMLElement | null>(null)
 const tocListRef = ref<HTMLElement | null>(null)
 
-let suppressScroll = false
-let scrollRaf = 0
+const pageIndex = ref(0)
+const pageCount = ref(1)
+const pageWidth = ref(0)
+const snapping = ref(true)
+const layoutReady = ref(false)
+
 let reflowTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
 let loadSerial = 0
+let touchStartX = 0
+let touchStartY = 0
+let touchStartAt = 0
+let lastFlipAt = 0
+
+const articleStyle = computed(() => ({
+  transform: `translateX(${-pageIndex.value * pageWidth.value}px)`,
+  columnWidth: pageWidth.value > 0 ? `${pageWidth.value}px` : undefined,
+}))
 
 const currentBookPercent = computed(() => toProgressPercent(currentBookProgress.value))
 const currentChapterPercent = computed(() =>
@@ -88,6 +107,35 @@ const canGoNext = computed(() => {
 })
 const hasContent = computed(() => currentContent.value.length > 0)
 const isAutoSplit = computed(() => currentChapter.value?.autoSplit ?? false)
+const frontMatterCount = computed(() => countFrontMatterChapters(chapters.value))
+const numberedChapterCount = computed(() =>
+  Math.max(chapters.value.length - frontMatterCount.value, 0),
+)
+
+function chapterNumber(chapter: ChapterMeta): number | null {
+  return displayChapterNumber(chapter.order, frontMatterCount.value)
+}
+
+const filteredChapters = computed(() => {
+  const query = tocQuery.value.trim().toLowerCase()
+  if (!query) return chapters.value
+  const digits = /^\d+$/.test(query) ? Number(query) : null
+  return chapters.value.filter((chapter) => {
+    if (chapter.title.toLowerCase().includes(query)) return true
+    return digits !== null && chapterNumber(chapter) === digits
+  })
+})
+const tocSummary = computed(() =>
+  tocQuery.value.trim()
+    ? `找到 ${filteredChapters.value.length} 章`
+    : `共 ${numberedChapterCount.value} 章`,
+)
+const canTurnPreviousPage = computed(
+  () => canGoPrevious.value || pageIndex.value > 0,
+)
+const canTurnNextPage = computed(
+  () => canGoNext.value || pageIndex.value < pageCount.value - 1,
+)
 
 const readerStyle = computed(() => ({
   '--reader-font-size': `${settingsStore.settings.fontSize}px`,
@@ -128,31 +176,6 @@ function updateIndicators(offset: number): void {
   snapshotProgress()
 }
 
-function syncOffsetFromScroll(): void {
-  const scroll = scrollRef.value
-  const text = chapterTextRef.value
-  const chapter = currentChapter.value
-  if (!scroll || !text || !chapter || suppressScroll) return
-
-  const scrollRect = scroll.getBoundingClientRect()
-  let offset = findVisibleTextOffset(text, scrollRect.top + 10)
-  const nearBottom =
-    scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 12
-  atChapterEnd.value = nearBottom
-  if (nearBottom) {
-    offset = chapter.charCount
-  }
-  updateIndicators(offset)
-}
-
-function onScroll(): void {
-  if (suppressScroll || scrollRaf !== 0) return
-  scrollRaf = requestAnimationFrame(() => {
-    scrollRaf = 0
-    syncOffsetFromScroll()
-  })
-}
-
 function waitForPaint(): Promise<void> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {
@@ -161,17 +184,75 @@ function waitForPaint(): Promise<void> {
   })
 }
 
-async function restoreOffset(offset: number): Promise<void> {
+async function layoutPages(): Promise<void> {
+  const article = articleRef.value
+  if (!article) return
+  const width = article.clientWidth
+  if (width <= 0) return
+  pageWidth.value = width
   await nextTick()
   await waitForPaint()
-  const scroll = scrollRef.value
-  const text = chapterTextRef.value
-  if (!scroll || !text) return
+  pageCount.value = countPages(article)
+  if (pageIndex.value > pageCount.value - 1) {
+    goToPage(pageCount.value - 1, false)
+  }
+}
 
-  suppressScroll = true
-  scrollToTextOffset(text, scroll, offset)
+function pageOffsetAt(index: number): number {
+  const article = articleRef.value
+  const text = chapterTextRef.value
+  if (!article || !text) return 0
+  return offsetOfPage(text, article, index, pageWidth.value)
+}
+
+function syncIndicatorsFromPage(): void {
+  const chapter = currentChapter.value
+  if (!chapter) return
+  updateIndicators(
+    clampCharOffset(pageOffsetAt(pageIndex.value), chapter.charCount),
+  )
+}
+
+function goToPage(target: number, animate = true): void {
+  const next = Math.max(0, Math.min(target, pageCount.value - 1))
+  if (next === pageIndex.value) {
+    syncIndicatorsFromPage()
+    return
+  }
+  if (!animate) snapping.value = true
+  pageIndex.value = next
+  syncIndicatorsFromPage()
+  if (!animate) {
+    void nextTick(() => {
+      requestAnimationFrame(() => {
+        snapping.value = false
+      })
+    })
+  }
+}
+
+async function restoreOffset(offset: number): Promise<void> {
+  layoutReady.value = false
+  await nextTick()
   await waitForPaint()
-  suppressScroll = false
+  try {
+    await document.fonts?.ready
+  } catch {
+    // 字体加载失败时按当前布局测量即可。
+  }
+  await layoutPages()
+  const article = articleRef.value
+  const text = chapterTextRef.value
+  if (!article || !text) {
+    layoutReady.value = true
+    return
+  }
+  const page = pageOfOffset(text, article, offset, pageWidth.value)
+  goToPage(page, false)
+  await waitForPaint()
+  snapping.value = false
+  updateIndicators(offset)
+  layoutReady.value = true
 }
 
 function routeOffsetValue(): number | null {
@@ -211,9 +292,10 @@ async function loadChapter(
   try {
     const content = await getChapterContent(chapter.id)
     if (disposed) return
+    snapping.value = true
+    pageIndex.value = 0
     currentChapter.value = chapter
     currentContent.value = content
-    atChapterEnd.value = false
 
     await nextTick()
     if (chapterTextRef.value) {
@@ -228,15 +310,8 @@ async function loadChapter(
           : 0),
       chapter.charCount,
     )
-    const scrollElement = scrollRef.value
-    const textElement = chapterTextRef.value
-    if (scrollElement && textElement) {
-      suppressScroll = true
-      scrollToTextOffset(textElement, scrollElement, offset)
-      await waitForPaint()
-      suppressScroll = false
-    }
-    updateIndicators(offset)
+    await restoreOffset(offset)
+    if (disposed) return
     chapterLoading.value = false
 
     document.title = `${chapter.title} · ${activeBook.title} · ReadNook`
@@ -436,17 +511,107 @@ async function removeBookmarkItem(bookmark: Bookmark): Promise<void> {
   }
 }
 
+async function turnPage(direction: -1 | 1): Promise<void> {
+  if (loading.value || chapterLoading.value || !layoutReady.value) return
+  const chapter = currentChapter.value
+  if (!chapter) return
+
+  if (direction > 0) {
+    if (pageIndex.value < pageCount.value - 1) {
+      goToPage(pageIndex.value + 1)
+      return
+    }
+    if (!canGoNext.value) {
+      toast.show('已经是最后一章。', 'info', 2_000)
+      return
+    }
+    await goToAdjacent(1)
+    return
+  }
+
+  if (pageIndex.value > 0) {
+    goToPage(pageIndex.value - 1)
+    return
+  }
+  const previous = chapters.value[chapter.order - 1]
+  if (!previous) {
+    toast.show('已经是第一章。', 'info', 2_000)
+    return
+  }
+  await loadChapter(previous.chapterKey, Math.max(previous.charCount - 1, 0), true)
+}
+
+function onPagesTouchStart(event: TouchEvent): void {
+  if (event.touches.length !== 1) return
+  const touch = event.touches[0]
+  if (!touch) return
+  touchStartX = touch.clientX
+  touchStartY = touch.clientY
+  touchStartAt = Date.now()
+}
+
+function onPagesTouchEnd(event: TouchEvent): void {
+  const touch = event.changedTouches[0]
+  if (!touch) return
+  if (event.touches.length > 0 || Date.now() - touchStartAt > 900) return
+  const dx = touch.clientX - touchStartX
+  const dy = touch.clientY - touchStartY
+  if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.3) return
+  lastFlipAt = Date.now()
+  void turnPage(dx < 0 ? 1 : -1)
+}
+
+function onPagesClick(event: MouseEvent): void {
+  if (Date.now() - lastFlipAt < 500) return
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed) return
+  const target = event.target
+  if (target instanceof HTMLElement && target.closest('a, button')) return
+  const pages = pagesRef.value
+  if (!pages) return
+  const rect = pages.getBoundingClientRect()
+  if (rect.width === 0) return
+  const ratio = (event.clientX - rect.left) / rect.width
+  if (ratio <= 0.22) {
+    void turnPage(-1)
+  } else if (ratio >= 0.78) {
+    void turnPage(1)
+  }
+}
+
+function onReaderKeydown(event: KeyboardEvent): void {
+  if (tocOpen.value || bookmarksOpen.value || settingsOpen.value) return
+  const target = event.target
+  if (
+    target instanceof HTMLElement &&
+    ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+  ) {
+    return
+  }
+  if (
+    event.key === 'ArrowRight' ||
+    event.key === 'PageDown' ||
+    event.key === ' '
+  ) {
+    event.preventDefault()
+    void turnPage(1)
+  } else if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
+    event.preventDefault()
+    void turnPage(-1)
+  }
+}
+
 function scheduleReflowRestore(): void {
+  if (!layoutReady.value || loading.value || chapterLoading.value) return
   if (reflowTimer) clearTimeout(reflowTimer)
-  const offset = lastKnownOffset.value
   reflowTimer = setTimeout(() => {
     reflowTimer = null
-    void restoreOffset(offset).then(() => updateIndicators(offset))
+    void restoreOffset(lastKnownOffset.value)
   }, 100)
 }
 
 function onViewportResize(): void {
-  if (loading.value || !currentChapter.value) return
+  if (loading.value || chapterLoading.value || !currentChapter.value) return
   scheduleReflowRestore()
 }
 
@@ -457,18 +622,26 @@ watch(
     () => settingsStore.settings.pageMargin,
   ],
   () => {
-    if (!currentChapter.value || suppressScroll) return
-    syncOffsetFromScroll()
+    if (!currentChapter.value) return
     scheduleReflowRestore()
   },
   { flush: 'pre' },
 )
 
 watch(tocOpen, async (open) => {
-  if (!open) return
+  if (!open) {
+    tocQuery.value = ''
+    return
+  }
   await nextTick()
+  if (tocQuery.value) return
   const active = tocListRef.value?.querySelector<HTMLElement>('[aria-current="location"]')
   active?.scrollIntoView({ block: 'center' })
+})
+
+watch(tocQuery, async () => {
+  await nextTick()
+  tocListRef.value?.closest<HTMLElement>('.app-dialog__body')?.scrollTo({ top: 0 })
 })
 
 watch(
@@ -484,16 +657,17 @@ watch(
 onMounted(() => {
   window.addEventListener('resize', onViewportResize)
   window.visualViewport?.addEventListener('resize', onViewportResize)
+  window.addEventListener('keydown', onReaderKeydown)
   void loadReader()
 })
 
 onBeforeUnmount(() => {
   disposed = true
   loadSerial += 1
-  if (scrollRaf !== 0) cancelAnimationFrame(scrollRaf)
   if (reflowTimer) clearTimeout(reflowTimer)
   window.removeEventListener('resize', onViewportResize)
   window.visualViewport?.removeEventListener('resize', onViewportResize)
+  window.removeEventListener('keydown', onReaderKeydown)
   snapshotProgress()
   void flushReadingProgress().catch(() => undefined)
 })
@@ -568,63 +742,49 @@ onBeforeUnmount(() => {
       </div>
 
       <div
-        ref="scrollRef"
-        class="reader-scroll"
-        @scroll.passive="onScroll"
+        ref="pagesRef"
+        class="reader-pages"
+        @touchstart.passive="onPagesTouchStart"
+        @touchend="onPagesTouchEnd"
+        @click="onPagesClick"
       >
-        <article class="reader-article">
-          <header class="chapter-heading">
-            <p class="chapter-heading__book">{{ book.title }}</p>
-            <h2>
-              {{ currentChapter.title }}
-              <span v-if="isAutoSplit" class="auto-badge">自动分段</span>
-            </h2>
-            <p class="chapter-heading__meta">
-              本章 {{ currentChapterPercent }}% · 全书 {{ currentBookPercent }}%
-            </p>
-          </header>
+        <div class="reader-pages__viewport">
+          <article
+            ref="articleRef"
+            class="reader-article"
+            :class="{ 'is-snapping': snapping }"
+            :style="articleStyle"
+          >
+            <header class="chapter-heading">
+              <p class="chapter-heading__book">{{ book.title }}</p>
+              <h2>
+                {{ currentChapter.title }}
+                <span v-if="isAutoSplit" class="auto-badge">自动分段</span>
+              </h2>
+              <p class="chapter-heading__meta">
+                本章 {{ currentChapterPercent }}% · 全书 {{ currentBookPercent }}%
+              </p>
+            </header>
 
-          <div ref="chapterTextRef" class="chapter-text" />
-          <p v-if="!hasContent" class="empty-chapter">（本章无正文）</p>
+            <div ref="chapterTextRef" class="chapter-text" />
+            <p v-if="!hasContent" class="empty-chapter">（本章无正文）</p>
+          </article>
+        </div>
 
-          <footer class="chapter-end">
-            <p v-if="isAutoSplit" class="auto-note">
-              <AppIcon name="alert" :size="15" />
-              此段由 ReadNook 自动分段，原文仍然完整保存。
-            </p>
-            <div class="chapter-end__actions">
-              <button
-                type="button"
-                class="button"
-                :disabled="!canGoPrevious"
-                @click="goToAdjacent(-1)"
-              >
-                <AppIcon name="chevron-left" :size="16" />
-                上一章
-              </button>
-              <button
-                type="button"
-                class="button button--primary"
-                :disabled="!canGoNext"
-                @click="goToAdjacent(1)"
-              >
-                下一章
-                <AppIcon name="chevron-right" :size="16" />
-              </button>
-            </div>
-          </footer>
-        </article>
+        <p v-if="pageWidth > 0" class="reader-page-indicator" aria-hidden="true">
+          {{ pageIndex + 1 }} / {{ pageCount }}
+        </p>
       </div>
 
       <footer class="reader-bottombar">
         <button
           type="button"
           class="reader-tool"
-          :disabled="!canGoPrevious"
-          @click="goToAdjacent(-1)"
+          :disabled="!canTurnPreviousPage"
+          @click="turnPage(-1)"
         >
           <AppIcon name="chevron-left" :size="21" />
-          <span>上一章</span>
+          <span>上一页</span>
         </button>
         <button type="button" class="reader-tool" @click="addCurrentBookmark">
           <AppIcon name="bookmark" :size="20" />
@@ -637,34 +797,76 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="reader-tool"
-          :disabled="!canGoNext"
-          @click="goToAdjacent(1)"
+          :disabled="!canTurnNextPage"
+          @click="turnPage(1)"
         >
           <AppIcon name="chevron-right" :size="21" />
-          <span>下一章</span>
+          <span>下一页</span>
         </button>
       </footer>
 
-      <BaseDialog v-model:open="tocOpen" title="目录" variant="sheet">
+      <BaseDialog
+        v-model:open="tocOpen"
+        title="目录"
+        variant="sheet"
+        fixed-height
+      >
+        <template #subheader>
+          <div class="toc-toolbar">
+            <label class="toc-search">
+              <AppIcon name="search" :size="16" />
+              <input
+                v-model="tocQuery"
+                type="search"
+                class="toc-search__input"
+                placeholder="搜索章节名或序号"
+                aria-label="搜索章节"
+                autocomplete="off"
+              />
+              <button
+                v-if="tocQuery"
+                type="button"
+                class="toc-search__clear"
+                aria-label="清除搜索"
+                @click="tocQuery = ''"
+              >
+                <AppIcon name="close" :size="14" />
+              </button>
+            </label>
+            <p class="toc-summary" role="status">{{ tocSummary }}</p>
+          </div>
+        </template>
         <div ref="tocListRef" class="toc-list">
           <button
-            v-for="chapter in chapters"
+            v-for="chapter in filteredChapters"
             :key="chapter.chapterKey"
             type="button"
             class="toc-item"
             :class="{
               'is-active': chapter.chapterKey === currentChapter.chapterKey,
+              'is-front-matter': isFrontMatterChapter(chapter),
+              'is-front-matter-last':
+                isFrontMatterChapter(chapter) &&
+                chapter.order === frontMatterCount - 1,
             }"
             :aria-current="
               chapter.chapterKey === currentChapter.chapterKey ? 'location' : undefined
             "
             @click="jumpToChapter(chapter.chapterKey)"
           >
-            <span class="toc-item__order">{{ chapter.order + 1 }}</span>
+            <span class="toc-item__order" aria-hidden="true">{{
+              chapterNumber(chapter) ?? ''
+            }}</span>
             <span class="toc-item__title">{{ chapter.title }}</span>
-            <span v-if="chapter.autoSplit" class="toc-item__badge">自动</span>
+            <span v-if="isFrontMatterChapter(chapter)" class="toc-item__badge">
+              前置
+            </span>
+            <span v-else-if="chapter.autoSplit" class="toc-item__badge">自动</span>
           </button>
         </div>
+        <p v-if="filteredChapters.length === 0" class="toc-empty">
+          没有找到匹配的章节
+        </p>
       </BaseDialog>
 
       <BaseDialog v-model:open="bookmarksOpen" title="书签" variant="sheet">

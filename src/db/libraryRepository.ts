@@ -1,4 +1,5 @@
 import { db, type ReadNookDatabase } from '@/db/database'
+import { countFrontMatterChapters } from '@/domain/books/frontMatter'
 import type {
   Book,
   BookFile,
@@ -73,6 +74,39 @@ export async function listChapters(
 ): Promise<ChapterMeta[]> {
   const chapters = await database.chapters.where('bookId').equals(bookId).toArray()
   return chapters.sort((a, b) => a.order - b.order)
+}
+
+/**
+ * 旧书没有 frontMatterCount 字段，这里按章节标题补算一次并写回，
+ * 之后书架与进度文案就能稳定排除“开篇”。
+ */
+export async function backfillFrontMatterCounts(
+  books: Book[],
+  database: ReadNookDatabase = db,
+): Promise<void> {
+  const pending = books.filter(
+    (book) => typeof book.frontMatterCount !== 'number',
+  )
+  if (pending.length === 0) return
+
+  const rows = await database.chapters
+    .where('bookId')
+    .anyOf(pending.map((book) => book.id))
+    .toArray()
+
+  const byBook = new Map<string, ChapterMeta[]>()
+  for (const row of rows) {
+    const list = byBook.get(row.bookId)
+    if (list) list.push(row)
+    else byBook.set(row.bookId, [row])
+  }
+
+  for (const book of pending) {
+    const list = (byBook.get(book.id) ?? []).sort((a, b) => a.order - b.order)
+    const count = countFrontMatterChapters(list)
+    book.frontMatterCount = count
+    await database.books.update(book.id, { frontMatterCount: count })
+  }
 }
 
 export async function getChapter(

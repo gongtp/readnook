@@ -3,77 +3,72 @@ function textNodeOf(root: HTMLElement): Text | null {
   return first?.nodeType === Node.TEXT_NODE ? (first as Text) : null
 }
 
-function topOfOffset(node: Text, offset: number): number {
+function rangeRectAt(node: Text, offset: number): DOMRect | null {
   const length = node.data.length
-  const start = Math.max(0, Math.min(offset, length))
+  if (length === 0) return null
+  const start = Math.max(0, Math.min(offset, length - 1))
 
   const range = document.createRange()
   range.setStart(node, start)
   range.setEnd(node, Math.min(start + 1, length))
   let rect = range.getBoundingClientRect()
-  if (rect.height > 0 || rect.width > 0) return rect.top
+  if (rect.height > 0 || rect.width > 0) return rect
 
-  range.setEnd(node, Math.min(length, start + 24))
+  range.setEnd(node, Math.min(length, start + 16))
   const rects = range.getClientRects()
-  rect = rects[0] ?? rect
-  return rect.top
+  return rects[0] ?? rect
 }
 
-export function findVisibleTextOffset(
+/**
+ * 分页模式下文本按列横向排布：同一列的字符共享列左边界，
+ * 因此“字符所在列”等于它与正文起始左边界之间的距离除以页宽。
+ */
+export function pageOfOffset(
   root: HTMLElement,
-  viewportTop: number,
+  article: HTMLElement,
+  offset: number,
+  pageWidth: number,
+): number {
+  if (pageWidth <= 0) return 0
+  const node = textNodeOf(root)
+  if (!node) return 0
+  const rect = rangeRectAt(node, offset)
+  if (!rect) return 0
+  const articleLeft = article.getBoundingClientRect().left
+  return Math.max(0, Math.floor((rect.left - articleLeft) / pageWidth))
+}
+
+/** 二分查找某一页第一个字符的偏移，依赖 pageOfOffset 随偏移单调不减。 */
+export function offsetOfPage(
+  root: HTMLElement,
+  article: HTMLElement,
+  page: number,
+  pageWidth: number,
 ): number {
   const node = textNodeOf(root)
-  if (!node || node.data.length === 0) return 0
+  if (!node) return 0
+  const length = node.data.length
+  if (length === 0 || page <= 0) return 0
 
   let low = 0
-  let high = node.data.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    const top = topOfOffset(node, middle)
-    if (top < viewportTop) {
-      low = middle + 1
+  let high = length - 1
+  let found = length
+  while (low <= high) {
+    const middle = (low + high) >> 1
+    const current = pageOfOffset(root, article, middle, pageWidth)
+    if (current >= page) {
+      found = middle
+      high = middle - 1
     } else {
-      high = middle
+      low = middle + 1
     }
   }
-  return low
+  return found === length ? length - 1 : found
 }
 
-export function scrollToTextOffset(
-  root: HTMLElement,
-  container: HTMLElement,
-  offset: number,
-  padding = 8,
-): void {
-  const node = textNodeOf(root)
-  if (!node) return
-
-  const length = node.data.length
-  if (length === 0) {
-    container.scrollTop = 0
-    return
-  }
-  if (offset <= 0) {
-    container.scrollTop = 0
-    return
-  }
-
-  const safeOffset = Math.max(0, Math.min(Math.floor(offset), length))
-  if (safeOffset >= length) {
-    container.scrollTop = container.scrollHeight
-    return
-  }
-
-  const range = document.createRange()
-  range.setStart(node, safeOffset)
-  range.setEnd(node, Math.min(safeOffset + 1, length))
-  let rect = range.getBoundingClientRect()
-  if (rect.height === 0 && rect.width === 0) {
-    range.setEnd(node, Math.min(length, safeOffset + 24))
-    rect = range.getBoundingClientRect()
-  }
-
-  const containerRect = container.getBoundingClientRect()
-  container.scrollTop += rect.top - containerRect.top - padding
+/** 列布局下正文的横向总宽是页宽的整数倍，向上取整可容忍亚像素误差。 */
+export function countPages(article: HTMLElement): number {
+  const width = article.clientWidth
+  if (width <= 0) return 1
+  return Math.max(1, Math.round(article.scrollWidth / width))
 }

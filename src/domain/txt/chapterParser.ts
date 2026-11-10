@@ -1,4 +1,4 @@
-import { AUTO_SEGMENT_CHARS, PARSER_VERSION } from '@/config/app'
+import { AUTO_SEGMENT_CHARS, MAX_CHAPTER_CHARS, PARSER_VERSION } from '@/config/app'
 import type { ParsedBook, ParsedChapter } from '@/types/importer'
 import type { AutoSplitReason } from '@/types/models'
 
@@ -103,6 +103,7 @@ function scanHeadings(text: string): Heading[] {
 export function parseTxtChapters(
   rawText: string,
   autoSegmentChars = AUTO_SEGMENT_CHARS,
+  maxChapterChars = MAX_CHAPTER_CHARS,
 ): ParsedBook {
   const text = rawText.replace(/\r\n?/g, '\n').replace(/^\uFEFF/, '')
   const warnings: string[] = []
@@ -132,7 +133,7 @@ export function parseTxtChapters(
     if (firstHeading) {
       const frontMatter = trimBoundaryNewlines(text.slice(0, firstHeading.start))
       if (frontMatter.trim().length > 0) {
-        const parts = splitLongText(frontMatter, autoSegmentChars)
+        const parts = splitLongText(frontMatter, maxChapterChars)
         drafts.push(
           ...parts.map(
             (content, index): ChapterDraft => ({
@@ -143,6 +144,9 @@ export function parseTxtChapters(
           ),
         )
         warnings.push('章节标题前的正文已保留为“开篇”。')
+        if (parts.length > 1) {
+          warnings.push('“开篇”内容过长，已自动分段。')
+        }
       }
     }
 
@@ -152,7 +156,7 @@ export function parseTxtChapters(
       const content = trimBoundaryNewlines(
         text.slice(heading.contentStart, contentEnd),
       )
-      const parts = splitLongText(content, autoSegmentChars)
+      const parts = splitLongText(content, maxChapterChars)
       if (parts.length > 1) splitChapterCount += 1
 
       drafts.push(

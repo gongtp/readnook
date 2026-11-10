@@ -228,12 +228,24 @@ function clearSearch(): void {
   search.value = ''
 }
 
-function chapterLabel(entry: ShelfItem): string {
-  if (entry.percent <= 0) return `共 ${entry.book.chapterCount} 章`
+function numberedChapterCount(book: Book): number {
+  return Math.max(book.chapterCount - (book.frontMatterCount ?? 0), 0)
+}
+
+function bookLocation(entry: ShelfItem): string {
   return formatChapterLocation(
     entry.progress?.chapterIndex ?? 0,
     entry.book.chapterCount,
+    entry.book.frontMatterCount ?? 0,
   )
+}
+
+function chapterLabel(entry: ShelfItem): string {
+  if (entry.percent <= 0) {
+    const total = numberedChapterCount(entry.book)
+    return total > 0 ? `共 ${total} 章` : '暂无章节'
+  }
+  return bookLocation(entry)
 }
 
 function progressLabel(entry: ShelfItem): string {
@@ -346,7 +358,7 @@ onMounted(() => {
             <div class="resume-card__copy">
               <h2>{{ continueEntry.book.title }}</h2>
               <p>
-                {{ formatChapterLocation(continueEntry.progress?.chapterIndex ?? 0, continueEntry.book.chapterCount) }}
+                {{ bookLocation(continueEntry) }}
                 <span aria-hidden="true">·</span>
                 {{ formatRelativeTime(continueEntry.book.lastReadAt || continueEntry.book.importedAt) }}
               </p>

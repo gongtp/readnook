@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import {
+  backfillFrontMatterCounts,
   deleteBookCascade,
   getProgressMap,
   listBooks,
@@ -54,6 +55,7 @@ export const useLibraryStore = defineStore('library', () => {
     error.value = ''
     try {
       const books = await listBooks()
+      await backfillFrontMatterCounts(books)
       const progressMap = await getProgressMap(books.map((book) => book.id))
       const next = books.map((book) => {
         const progress = progressMap.get(book.id) ?? null

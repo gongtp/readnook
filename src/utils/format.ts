@@ -42,9 +42,13 @@ export function formatRelativeTime(timestamp: number, now = Date.now()): string 
 export function formatChapterLocation(
   chapterIndex: number,
   chapterCount: number,
+  frontMatterCount = 0,
 ): string {
-  if (chapterCount <= 0) return '暂无章节'
-  return `第 ${Math.min(chapterIndex + 1, chapterCount)} / ${chapterCount} 章`
+  const numberedCount = Math.max(chapterCount - frontMatterCount, 0)
+  if (numberedCount <= 0) return '暂无章节'
+  if (chapterIndex < frontMatterCount) return '开篇'
+  const position = Math.min(chapterIndex - frontMatterCount + 1, numberedCount)
+  return `第 ${position} / ${numberedCount} 章`
 }
 
 export function formatBackupFileName(now = new Date()): string {

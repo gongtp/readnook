@@ -102,40 +102,48 @@ describe('parseTxtChapters', () => {
     expect(parsed.warnings[0]).toContain('自动分段')
   })
 
-  it('splits one overlong chapter into ordered continuation chapters', () => {
+  it('keeps a long chapter intact when headings exist', () => {
     const body = `${'甲'.repeat(12)}\n${'乙'.repeat(12)}\n${'丙'.repeat(6)}`
     const parsed = parseTxtChapters(`第一章 长夜\n${body}\n第二章 天明\n短`, 10)
-    const titles = parsed.chapters.map((chapter) => chapter.title)
-    expect(titles).toEqual([
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual([
       '第一章 长夜',
-      '第一章 长夜（续 2）',
-      '第一章 长夜（续 3）',
-      '第一章 长夜（续 4）',
       '第二章 天明',
     ])
-    expect(parsed.chapters.map((chapter) => chapter.order)).toEqual([
-      0, 1, 2, 3, 4,
-    ])
-    expect(parsed.chapters[0]?.autoSplitReason).toBe('long-chapter')
-    expect(parsed.chapters[0]?.autoSplit).toBe(true)
-    expect(parsed.chapters[4]?.autoSplitReason).toBeNull()
-    expect(parsed.warnings.join('')).toContain('1 个超长章节')
+    expect(parsed.chapters[0]?.content).toBe(body)
+    expect(parsed.chapters[1]?.content).toBe('短')
+    expect(parsed.chapters.every((chapter) => !chapter.autoSplit)).toBe(true)
+    expect(parsed.chapters[0]?.autoSplitReason).toBeNull()
+    expect(parsed.warnings.join('')).not.toContain('超长章节')
     expect(parsed.chapters.map((chapter) => chapter.content).join('')).toBe(
       `${body}短`,
     )
   })
 
-  it('splits long front matter with continuation titles', () => {
+  it('only splits a chapter beyond the safety cap', () => {
+    const body = '甲'.repeat(25)
+    const parsed = parseTxtChapters(`第一章 长夜\n${body}`, 8_000, 10)
+    expect(parsed.chapters.map((chapter) => chapter.title)).toEqual([
+      '第一章 长夜',
+      '第一章 长夜（续 2）',
+      '第一章 长夜（续 3）',
+    ])
+    expect(parsed.chapters[0]?.autoSplitReason).toBe('long-chapter')
+    expect(parsed.chapters.every((chapter) => chapter.autoSplit)).toBe(true)
+    expect(parsed.warnings.join('')).toContain('1 个超长章节')
+    expect(parsed.chapters.map((chapter) => chapter.content).join('')).toBe(body)
+  })
+
+  it('keeps long front matter as a single opening chapter', () => {
     const parsed = parseTxtChapters(
       `${'序'.repeat(15)}\n第一章 开始\n正文`,
       10,
     )
     expect(parsed.chapters.map((chapter) => chapter.title)).toEqual([
       '开篇',
-      '开篇（续 2）',
       '第一章 开始',
     ])
-    expect(parsed.chapters[1]?.autoSplitReason).toBe('front-matter')
+    expect(parsed.chapters[0]?.content).toBe('序'.repeat(15))
+    expect(parsed.chapters[0]?.autoSplitReason).toBeNull()
   })
 
   it('normalizes CRLF and a leading BOM before parsing', () => {

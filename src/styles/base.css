@@ -698,6 +698,11 @@ input[type="checkbox"] {
   box-shadow: var(--shadow);
 }
 
+html.dialog-open,
+html.dialog-open body {
+  overflow: hidden;
+}
+
 .app-dialog__header {
   display: flex;
   align-items: center;
@@ -718,6 +723,22 @@ input[type="checkbox"] {
   color: var(--text-secondary);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.app-dialog__subheader {
+  flex: 0 0 auto;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.app-dialog--fixed .app-dialog__panel {
+  height: min(84dvh, 760px);
+}
+
+.app-dialog--fixed .app-dialog__body {
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .app-dialog__body > p + p {

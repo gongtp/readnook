@@ -1,5 +1,6 @@
 export const APP_NAME = 'ReadNook'
 export const APP_VERSION = __APP_VERSION__
+export const APP_BUILD_TIME = __APP_BUILD_TIME__
 export const DB_NAME = 'ReadNookDB'
 export const DB_VERSION = 1
 export const PARSER_VERSION = 1
@@ -8,6 +9,8 @@ export const MAX_TXT_BYTES = 30 * 1024 * 1024
 export const MAX_BACKUP_ARCHIVE_BYTES = 200 * 1024 * 1024
 export const MAX_BACKUP_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
 export const AUTO_SEGMENT_CHARS = 8_000
+// 识别到章节标题时不再按字数拆章；只有单章大到会影响滚动时才兜底分段。
+export const MAX_CHAPTER_CHARS = 100_000
 
 export const BACKUP_FORMAT = 'readnook-backup'
 export const BACKUP_VERSION = 1

@@ -132,6 +132,7 @@ async function main() {
   })
 
   let browser
+  let page
   const startedAt = Date.now()
 
   try {
@@ -153,7 +154,7 @@ async function main() {
       serviceWorkers: 'allow',
       acceptDownloads: true,
     })
-    const page = await context.newPage()
+    page = await context.newPage()
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text())
     })
@@ -182,6 +183,39 @@ async function main() {
       const group = page.locator('details.settings-group', { hasText: label })
       await group.locator('summary').click()
       await group.locator('.settings-group__body').waitFor({ state: 'visible' })
+    }
+
+    async function swipeHorizontally(fromX, toX) {
+      await page.locator('.reader-pages').evaluate(
+        (element, [start, end]) => {
+          const point = (x) =>
+            new Touch({
+              identifier: 1,
+              target: element,
+              clientX: x,
+              clientY: 420,
+            })
+          const startTouch = point(start)
+          element.dispatchEvent(
+            new TouchEvent('touchstart', {
+              bubbles: true,
+              cancelable: true,
+              touches: [startTouch],
+              changedTouches: [startTouch],
+            }),
+          )
+          const endTouch = point(end)
+          element.dispatchEvent(
+            new TouchEvent('touchend', {
+              bubbles: true,
+              cancelable: true,
+              touches: [],
+              changedTouches: [endTouch],
+            }),
+          )
+        },
+        [fromX, toX],
+      )
     }
 
     async function noHorizontalOverflow(label) {
@@ -227,23 +261,83 @@ async function main() {
     await page.locator('.reader-shell[aria-busy="false"]').waitFor()
     assert(true, '导入后自动打开阅读器，并保留标题前的开篇')
 
-    await page
-      .locator('.reader-bottombar button')
-      .filter({ hasText: '下一章' })
-      .click()
+    await page.getByRole('button', { name: '打开目录' }).click()
+    await page.locator('dialog[open]').waitFor({ state: 'visible' })
+    await page.fill('.toc-search__input', '第二章')
+    await page.waitForTimeout(300)
+    const filteredCount = await page.locator('.toc-item').count()
+    assert(filteredCount === 1, '目录搜索可按章节名过滤')
+    const tocSummaryText = await page.locator('.toc-summary').textContent()
+    assert(
+      tocSummaryText?.includes('找到 1 章') ?? false,
+      '目录搜索显示匹配数量',
+    )
+    await page.locator('.toc-search__clear').click()
+    await page.waitForTimeout(250)
+    const fullCount = await page.locator('.toc-item').count()
+    assert(fullCount > 1, '清除目录搜索后恢复完整列表')
+
+    const tocAllText = await page.locator('.toc-summary').textContent()
+    assert(
+      tocAllText?.includes('共 6 章') ?? false,
+      '目录章数不包含开篇',
+    )
+
+    const frontMatterRow = page.locator('.toc-item.is-front-matter')
+    assert(
+      (await frontMatterRow.count()) === 1 &&
+        ((await frontMatterRow.locator('.toc-item__order').textContent())?.trim() ??
+          '') === '',
+      '开篇在目录中不占章节序号',
+    )
+    const firstNumberedRow = page.locator('.toc-item').nth(1)
+    assert(
+      ((await firstNumberedRow.locator('.toc-item__order').textContent())?.trim() ??
+        '') === '1',
+      '第一章在目录中从 1 开始编号',
+    )
+    await screenshot('50-toc-front-matter.png')
+
+    await page.fill('.toc-search__input', '1')
+    await page.waitForTimeout(250)
+    const digitRows = page.locator('.toc-item')
+    assert(
+      (await digitRows.count()) === 1 &&
+        ((await digitRows.first().textContent())?.includes('第一章 雾起') ?? false),
+      '目录数字搜索按正文序号匹配',
+    )
+    await page.locator('.toc-search__clear').click()
+    await page.waitForTimeout(200)
+    await page.locator('.toc-item').filter({ hasText: '第一章 雾起' }).click()
     await waitForText('.chapter-heading h2', '第一章 雾起')
     await page.locator('.reader-shell[aria-busy="false"]').waitFor()
-    assert(true, '阅读器可切换到下一章')
+    assert(true, '阅读器可从目录跳转到指定章节')
 
-    await page.locator('.reader-scroll').evaluate((element) => {
-      element.scrollTop = element.scrollHeight
-    })
-    await page.waitForTimeout(2_200)
-    const percentText = await page.locator('.chapter-heading__meta').textContent()
+    const firstPage = await page.locator('.reader-page-indicator').textContent()
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(500)
+    const secondPage = await page.locator('.reader-page-indicator').textContent()
     assert(
-      percentText?.includes('全书') ?? false,
-      '滚动后显示章节与全书阅读百分比',
+      (firstPage?.trim() ?? '') !== (secondPage?.trim() ?? ''),
+      '阅读器可用方向键左右翻页',
     )
+
+    await page.keyboard.press('ArrowLeft')
+    await page.waitForTimeout(400)
+    await swipeHorizontally(320, 70)
+    await page.waitForTimeout(400)
+    const swipedPage = await page.locator('.reader-page-indicator').textContent()
+    assert(
+      swipedPage?.trim() === secondPage?.trim(),
+      '阅读器可左右滑动翻页',
+    )
+
+    const pagedPercent = await page.locator('.chapter-heading__meta').textContent()
+    assert(
+      pagedPercent?.includes('全书') ?? false,
+      '翻页后显示章节与全书阅读百分比',
+    )
+    await page.waitForTimeout(2_200)
 
     await page
       .locator('.reader-bottombar button')
@@ -272,16 +366,13 @@ async function main() {
     assert(restoredTheme === 'dark', '刷新后主题保持为深色')
     await page.waitForFunction(
       () => {
-        const element = document.querySelector('.reader-scroll')
-        return element instanceof HTMLElement && element.scrollTop > 0
+        const element = document.querySelector('.reader-page-indicator')
+        return /^\s*2\s*\//.test(element?.textContent ?? '')
       },
       undefined,
       { timeout: 10_000 },
     )
-    const restoredScroll = await page
-      .locator('.reader-scroll')
-      .evaluate((element) => element.scrollTop)
-    assert(restoredScroll > 0, '刷新后按字符偏移恢复阅读位置')
+    assert(true, '刷新后按字符偏移恢复阅读页')
     await noHorizontalOverflow('阅读页')
 
     await page.getByRole('button', { name: '查看书签' }).click()
@@ -300,6 +391,11 @@ async function main() {
       shelfProgress?.includes('已读') ?? false,
       '返回书架后显示已读进度',
     )
+    const shelfLocation = await page.locator('.book-tile__meta').first().textContent()
+    assert(
+      shelfLocation?.includes('第 1 / 6 章') ?? false,
+      '书架章节位置不把开篇算作第 1 章',
+    )
     await screenshot('05-shelf-with-progress.png')
 
     await page.getByRole('button', { name: '列表视图' }).click()
@@ -314,6 +410,26 @@ async function main() {
     await waitForText('#backup-heading', '备份与恢复')
     await page.evaluate(() => window.scrollTo(0, 0))
     await screenshot('06-settings-overview.png')
+
+    await openSettingsGroup('应用更新')
+    const updateGroup = page.locator('details.settings-group', { hasText: '应用更新' })
+    const versionText = await updateGroup.locator('.data-list').textContent()
+    assert(
+      (versionText?.includes('当前版本') ?? false) &&
+        (versionText?.includes('构建时间') ?? false),
+      '设置中显示当前版本与构建时间',
+    )
+    await updateGroup.getByRole('button', { name: '检查更新' }).click()
+    await updateGroup
+      .locator('.settings-body-text', { hasText: '已是最新版本' })
+      .waitFor({ timeout: 30_000 })
+    assert(true, '设置中可手动检查更新并确认已是最新版本')
+    await page
+      .locator('.toast')
+      .waitFor({ state: 'hidden', timeout: 10_000 })
+      .catch(() => undefined)
+    await screenshot('52-settings-update.png')
+
     await openSettingsGroup('备份与恢复')
     await page.getByRole('button', { name: /导出完整备份/ }).click()
     await waitForText('.backup-result', '备份已生成', 30_000)
@@ -552,6 +668,11 @@ async function main() {
       for (const entry of consoleErrors.slice(0, 10)) console.error(`  - ${entry}`)
     }
     try {
+      if (page) {
+        await page.screenshot({
+          path: join(artifactsDir, '99-failure.png'),
+        })
+      }
       await writeFile(
         join(artifactsDir, 'failure.json'),
         `${JSON.stringify(

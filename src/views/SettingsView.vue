@@ -4,7 +4,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import BaseDialog from '@/components/BaseDialog.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import ReaderSettingsPanel from '@/components/ReaderSettingsPanel.vue'
-import { APP_VERSION } from '@/config/app'
+import { APP_BUILD_TIME, APP_VERSION } from '@/config/app'
 import {
   createBackup,
   executeBackupRestore,
@@ -17,6 +17,7 @@ import {
   type StorageStatus,
 } from '@/services/storageService'
 import { clearDemoLibrary, seedDemoLibrary } from '@/services/demoService'
+import { useAppUpdateStore } from '@/stores/appUpdate'
 import { useReaderSettingsStore } from '@/stores/readerSettings'
 import { useToastStore } from '@/stores/toast'
 import type { PreparedBackup, RestoreSummary } from '@/types/backup'
@@ -24,10 +25,12 @@ import { getErrorMessage } from '@/utils/errors'
 import {
   formatBytes,
   formatDateTime,
+  formatRelativeTime,
 } from '@/utils/format'
 
 const toast = useToastStore()
 const settingsStore = useReaderSettingsStore()
+const update = useAppUpdateStore()
 
 const storageStatus = ref<StorageStatus | null>(null)
 const storageLoading = ref(false)
@@ -67,6 +70,55 @@ const persistenceLabel = computed(() => {
   if (status.persisted === false) return '尚未获得持久存储'
   return '状态未知'
 })
+
+const buildTimeLabel = computed(() => {
+  const timestamp = Date.parse(APP_BUILD_TIME)
+  return Number.isNaN(timestamp) ? '未知' : formatDateTime(timestamp)
+})
+
+const lastUpdateCheckLabel = computed(() =>
+  update.lastCheckedAt > 0
+    ? formatRelativeTime(update.lastCheckedAt)
+    : '尚未检查',
+)
+
+const updateStatusText = computed(() => {
+  switch (update.checkStatus) {
+    case 'checking':
+      return '正在向服务器查询最新版本…'
+    case 'available':
+      return '发现新版本，更新后应用会自动重新打开。'
+    case 'latest':
+      return '已是最新版本，无需更新。'
+    case 'offline':
+      return '当前处于离线状态，连上网络后再检查。'
+    case 'error':
+      return '检查更新失败，请检查网络后重试。'
+    case 'unsupported':
+      return '当前浏览器不支持 Service Worker，无法检查更新。'
+    default:
+      return '还没有检查过更新。'
+  }
+})
+
+const updateBadge = computed(() =>
+  update.hasUpdate ? '有新版本' : `v${APP_VERSION}`,
+)
+
+async function handleCheckUpdate(): Promise<void> {
+  const status = await update.checkForUpdate()
+  if (status === 'offline') toast.error('当前离线，连上网络后再检查更新。')
+  else if (status === 'error') toast.error('检查更新失败，请稍后重试。')
+}
+
+async function handleApplyUpdate(): Promise<void> {
+  try {
+    await update.applyUpdate()
+  } catch (error) {
+    console.error('ReadNook: 更新应用失败', error)
+    toast.error('更新没有完成，请检查网络后再试。当前版本仍可继续阅读。')
+  }
+}
 
 const backupSummaryTime = computed(() => {
   const createdAt = preparedBackup.value?.summary.createdAt
@@ -682,6 +734,73 @@ onBeforeUnmount(() => {
           </ol>
           <p class="settings-body-text">
             第一次联网打开并等待离线缓存完成后，ReadNook 才能断网启动。应用会在发现新版本时提示，而不会在阅读过程中自动刷新。
+          </p>
+        </div>
+      </details>
+
+      <details class="settings-group" aria-labelledby="update-heading">
+        <summary class="settings-group__summary">
+          <span class="settings-group__icon" aria-hidden="true">
+            <AppIcon name="refresh" :size="18" />
+          </span>
+          <span class="settings-group__copy">
+            <span
+              id="update-heading"
+              class="settings-group__title"
+              role="heading"
+              aria-level="2"
+            >
+              应用更新
+            </span>
+            <span class="settings-group__hint">检查并安装最新发布的版本</span>
+          </span>
+          <span class="settings-group__value">{{ updateBadge }}</span>
+          <AppIcon
+            class="settings-group__chevron"
+            name="chevron-right"
+            :size="16"
+          />
+        </summary>
+        <div class="settings-group__body">
+          <dl class="data-list">
+            <div>
+              <dt>当前版本</dt>
+              <dd>v{{ APP_VERSION }}</dd>
+            </div>
+            <div>
+              <dt>构建时间</dt>
+              <dd>{{ buildTimeLabel }}</dd>
+            </div>
+            <div>
+              <dt>上次检查</dt>
+              <dd>{{ lastUpdateCheckLabel }}</dd>
+            </div>
+          </dl>
+
+          <p class="settings-body-text" role="status">{{ updateStatusText }}</p>
+
+          <div class="button-row">
+            <button
+              type="button"
+              class="button"
+              :disabled="update.checking || update.applying"
+              @click="handleCheckUpdate"
+            >
+              {{ update.checking ? '检查中…' : '检查更新' }}
+            </button>
+            <button
+              v-if="update.hasUpdate"
+              type="button"
+              class="button button--primary"
+              :disabled="update.applying"
+              @click="handleApplyUpdate"
+            >
+              {{ update.applying ? '更新中…' : '立即更新' }}
+            </button>
+          </div>
+
+          <p class="field__hint">
+            更新只替换应用文件，本地书籍、阅读进度和书签都会保留；更新后应用会自动重新打开。
           </p>
         </div>
       </details>

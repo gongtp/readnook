@@ -10,6 +10,7 @@ import {
   BackupValidationError,
 } from '@/domain/backup/validate'
 import { buildReadingProgress, clampCharOffset } from '@/domain/progress'
+import { countFrontMatterChapters } from '@/domain/books/frontMatter'
 import { saveReaderSettings } from '@/db/settingsRepository'
 import { txtFormatAdapter } from '@/services/import/txtFormatAdapter'
 import {
@@ -385,6 +386,7 @@ export async function executeBackupRestore(
         encoding: backupBook.encoding,
         totalChars: parsed.totalChars,
         chapterCount: parsed.chapters.length,
+        frontMatterCount: countFrontMatterChapters(parsed.chapters),
         parserVersion: parsed.parserVersion,
         parseWarnings: parsed.warnings,
         importedAt: backupBook.importedAt,
