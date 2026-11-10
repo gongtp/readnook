@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
+import { lockPageScroll, unlockPageScroll } from '@/services/pageScrollLock'
 import { createId } from '@/utils/id'
 
 const props = withDefaults(
@@ -21,20 +22,13 @@ const emit = defineEmits<{
 const dialogRef = ref<HTMLDialogElement | null>(null)
 const titleId = `dialog-title-${createId()}`
 
-let lockedDialogs = 0
-
-function setScrollLock(locked: boolean): void {
-  lockedDialogs = Math.max(0, lockedDialogs + (locked ? 1 : -1))
-  if (typeof document === 'undefined') return
-  document.documentElement.classList.toggle('dialog-open', lockedDialogs > 0)
-}
-
 let scrollLocked = false
 
 function applyScrollLock(shouldLock: boolean): void {
   if (shouldLock === scrollLocked) return
   scrollLocked = shouldLock
-  setScrollLock(shouldLock)
+  if (shouldLock) lockPageScroll()
+  else unlockPageScroll()
 }
 
 function requestClose(): void {

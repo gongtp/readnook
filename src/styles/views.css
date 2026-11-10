@@ -1235,13 +1235,31 @@
   padding: 26px max(var(--reader-inline-padding), var(--safe-right))
     calc(38px + var(--safe-bottom))
     max(var(--reader-inline-padding), var(--safe-left));
-  overscroll-behavior: contain;
-  touch-action: pan-y;
+  overscroll-behavior: none;
+  touch-action: none;
 }
 
 .reader-pages__viewport {
   height: 100%;
   overflow: hidden;
+}
+
+/*
+ * 换章时正文整块替换，硬切看起来像文字“跳”了一下；
+ * 这里只做一次很短的淡入（不位移），让新页面柔和地出现。
+ */
+.reader-pages__viewport.is-chapter-swap {
+  animation: reader-chapter-swap 170ms ease-out;
+}
+
+@keyframes reader-chapter-swap {
+  from {
+    opacity: 0.35;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .reader-article {

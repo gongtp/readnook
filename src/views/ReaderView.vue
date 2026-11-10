@@ -79,17 +79,26 @@ const pageCount = ref(1)
 const pageWidth = ref(0)
 const snapping = ref(true)
 const layoutReady = ref(false)
+const chapterSwapping = ref(false)
+/** 跟手翻页时手指带来的额外位移（px，左负右正）。 */
+const dragOffset = ref(0)
 
 let reflowTimer: ReturnType<typeof setTimeout> | null = null
+let chapterSwapTimer: ReturnType<typeof setTimeout> | null = null
 let disposed = false
 let loadSerial = 0
 let touchStartX = 0
 let touchStartY = 0
 let touchStartAt = 0
 let lastFlipAt = 0
+let dragAxis: 'none' | 'horizontal' = 'none'
+let dragLastX = 0
+let dragLastAt = 0
+let dragVelocity = 0
+let dragPeak = 0
 
 const articleStyle = computed(() => ({
-  transform: `translateX(${-pageIndex.value * pageWidth.value}px)`,
+  transform: `translateX(${-pageIndex.value * pageWidth.value + dragOffset.value}px)`,
   columnWidth: pageWidth.value > 0 ? `${pageWidth.value}px` : undefined,
 }))
 
@@ -184,18 +193,48 @@ function waitForPaint(): Promise<void> {
   })
 }
 
-async function layoutPages(): Promise<void> {
-  const article = articleRef.value
-  if (!article) return
-  const width = article.clientWidth
-  if (width <= 0) return
-  pageWidth.value = width
-  await nextTick()
-  await waitForPaint()
-  pageCount.value = countPages(article)
-  if (pageIndex.value > pageCount.value - 1) {
-    goToPage(pageCount.value - 1, false)
+/** 没有自定义字体时 document.fonts.status 已经是 loaded，这里不会等出一帧空隙。 */
+async function waitForFonts(): Promise<void> {
+  const fonts = document.fonts
+  if (!fonts || fonts.status === 'loaded') return
+  try {
+    await fonts.ready
+  } catch {
+    // 字体加载失败时按当前布局测量即可。
   }
+}
+
+/**
+ * 同步量出当前正文的分页结果，并把页码落到 offset 所在页。
+ *
+ * 这里刻意不等待绘制：换章时如果先让新章节以第 1 页绘出来、
+ * 量完再把 transform 挪到目标页，用户就会看到文字先出现再跳一下。
+ * 读布局、定位都放在同一次任务里，浏览器第一次绘制时页码已经是对的。
+ */
+async function paginateAt(offset: number): Promise<void> {
+  const article = articleRef.value
+  const text = chapterTextRef.value
+  if (!article || !text) return
+  const width = article.clientWidth
+  if (width > 0 && width !== pageWidth.value) {
+    pageWidth.value = width
+    // column-width 落到样式上才能量出真实列宽；仍是同一帧内的微任务。
+    await nextTick()
+  }
+  if (width > 0) pageCount.value = countPages(article)
+
+  const safeOffset = clampCharOffset(offset, currentChapter.value?.charCount ?? 0)
+  const page =
+    pageWidth.value > 0
+      ? pageOfOffset(text, article, safeOffset, pageWidth.value)
+      : 0
+  pageIndex.value = clampPage(page)
+  updateIndicators(safeOffset)
+}
+
+function clampPage(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(Math.floor(value), pageCount.value - 1))
 }
 
 function pageOffsetAt(index: number): number {
@@ -213,45 +252,35 @@ function syncIndicatorsFromPage(): void {
   )
 }
 
-function goToPage(target: number, animate = true): void {
-  const next = Math.max(0, Math.min(target, pageCount.value - 1))
+function goToPage(target: number): void {
+  const next = clampPage(target)
   if (next === pageIndex.value) {
     syncIndicatorsFromPage()
     return
   }
-  if (!animate) snapping.value = true
   pageIndex.value = next
   syncIndicatorsFromPage()
-  if (!animate) {
-    void nextTick(() => {
-      requestAnimationFrame(() => {
-        snapping.value = false
-      })
-    })
-  }
+}
+
+/** 换章后让新的一页淡入，避免整块文字硬切造成的“跳”。 */
+function markChapterSwap(): void {
+  chapterSwapping.value = true
+  if (chapterSwapTimer) clearTimeout(chapterSwapTimer)
+  chapterSwapTimer = setTimeout(() => {
+    chapterSwapTimer = null
+    chapterSwapping.value = false
+  }, 240)
 }
 
 async function restoreOffset(offset: number): Promise<void> {
   layoutReady.value = false
+  snapping.value = true
+  await nextTick()
+  await waitForFonts()
+  await paginateAt(offset)
   await nextTick()
   await waitForPaint()
-  try {
-    await document.fonts?.ready
-  } catch {
-    // 字体加载失败时按当前布局测量即可。
-  }
-  await layoutPages()
-  const article = articleRef.value
-  const text = chapterTextRef.value
-  if (!article || !text) {
-    layoutReady.value = true
-    return
-  }
-  const page = pageOfOffset(text, article, offset, pageWidth.value)
-  goToPage(page, false)
-  await waitForPaint()
   snapping.value = false
-  updateIndicators(offset)
   layoutReady.value = true
 }
 
@@ -284,24 +313,29 @@ async function loadChapter(
   }
 
   if (currentChapter.value?.chapterKey !== chapter.chapterKey) {
+    // 记下旧章节位置即可，不等 IndexedDB 写完再换章（写链本身有顺序保证）。
     snapshotProgress()
-    await flushReadingProgress().catch(() => undefined)
+    void flushReadingProgress().catch(() => undefined)
   }
 
   chapterLoading.value = true
   try {
     const content = await getChapterContent(chapter.id)
     if (disposed) return
+    // 等字体时旧页面还留在屏幕上，不会让读者看到半成品。
+    await waitForFonts()
     snapping.value = true
     pageIndex.value = 0
+    dragOffset.value = 0
     currentChapter.value = chapter
     currentContent.value = content
 
+    // 标题先进入 DOM；正文写入后立刻同步测量分页，
+    // 这样新章节第一次被绘出来时就已经停在正确的页码上。
     await nextTick()
     if (chapterTextRef.value) {
       chapterTextRef.value.textContent = content
     }
-    await waitForPaint()
 
     const offset = clampCharOffset(
       requestedOffset ??
@@ -310,7 +344,12 @@ async function loadChapter(
           : 0),
       chapter.charCount,
     )
-    await restoreOffset(offset)
+    await paginateAt(offset)
+    markChapterSwap()
+    await nextTick()
+    await waitForPaint()
+    snapping.value = false
+    layoutReady.value = true
     if (disposed) return
     chapterLoading.value = false
 
@@ -322,6 +361,10 @@ async function loadChapter(
     }
   } catch (loadError) {
     if (disposed) return
+    // 换章失败时别把跟手位移留在页面上。
+    dragOffset.value = 0
+    snapping.value = false
+    layoutReady.value = true
     error.value = getErrorMessage(
       loadError,
       '章节读取失败，请返回书架后重试。',
@@ -432,7 +475,6 @@ async function jumpToChapter(chapterKey: string, offset = 0): Promise<void> {
   tocOpen.value = false
   if (currentChapter.value?.chapterKey === chapterKey) {
     await restoreOffset(offset)
-    updateIndicators(offset)
     return
   }
   await loadChapter(chapterKey, offset, true)
@@ -442,7 +484,6 @@ async function jumpToBookmark(bookmark: Bookmark): Promise<void> {
   bookmarksOpen.value = false
   if (currentChapter.value?.chapterKey === bookmark.chapterKey) {
     await restoreOffset(bookmark.charOffset)
-    updateIndicators(bookmark.charOffset)
     return
   }
   await loadChapter(bookmark.chapterKey, bookmark.charOffset, true)
@@ -541,24 +582,170 @@ async function turnPage(direction: -1 | 1): Promise<void> {
   await loadChapter(previous.chapterKey, Math.max(previous.charCount - 1, 0), true)
 }
 
+const DRAG_START_THRESHOLD = 12
+/** 手指位移一直没超过这个距离，就仍然算“点按”，交给 click 翻页。 */
+const TAP_SLOP = 20
+/** 松手时位移超过页宽的这个比例就翻页，否则弹回原页。 */
+const DRAG_TURN_RATIO = 0.28
+/** 章末/章首没有相邻页可跟手，手指拖到这个比例松手就换章。 */
+const DRAG_BOUNDARY_RATIO = 0.12
+const DRAG_FLICK_VELOCITY = 0.45
+const DRAG_MAX_RATIO = 0.94
+
+function canDragToPreviousPage(): boolean {
+  return pageIndex.value > 0
+}
+
+function canDragToNextPage(): boolean {
+  return pageIndex.value < pageCount.value - 1
+}
+
+/** 没有相邻页时给出阻尼，让手指有“到头了”的反馈而不是硬停。 */
+function rubberBand(value: number): number {
+  const limit = pageWidth.value * 0.12
+  return Math.sign(value) * Math.min(limit, Math.abs(value) * 0.28)
+}
+
+function constrainDrag(delta: number): number {
+  let value = delta
+  if (value < 0 && !canDragToNextPage()) value = rubberBand(value)
+  if (value > 0 && !canDragToPreviousPage()) value = rubberBand(value)
+  const limit = pageWidth.value * DRAG_MAX_RATIO
+  return Math.max(-limit, Math.min(limit, value))
+}
+
 function onPagesTouchStart(event: TouchEvent): void {
   if (event.touches.length !== 1) return
   const touch = event.touches[0]
   if (!touch) return
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed) return
   touchStartX = touch.clientX
   touchStartY = touch.clientY
   touchStartAt = Date.now()
+  dragLastX = touch.clientX
+  dragLastAt = touchStartAt
+  dragVelocity = 0
+  dragPeak = 0
+  dragAxis = 'none'
+  dragOffset.value = 0
+}
+
+/**
+ * 跟手翻页：手指横向拖动时，整条分栏页面跟着位移，
+ * 屏幕上自然同时露出当前页和相邻页（和纸质书一样）。
+ */
+function onPagesTouchMove(event: TouchEvent): void {
+  if (event.touches.length !== 1) return
+  const touch = event.touches[0]
+  if (!touch) return
+  if (loading.value || chapterLoading.value || !layoutReady.value) return
+
+  const dx = touch.clientX - touchStartX
+  const dy = touch.clientY - touchStartY
+  dragPeak = Math.max(dragPeak, Math.abs(dx))
+  if (dragAxis === 'none') {
+    if (Math.abs(dx) < DRAG_START_THRESHOLD) return
+    if (Math.abs(dx) < Math.abs(dy) * 1.2) return
+    dragAxis = 'horizontal'
+    // 拖动期间关掉过渡，位移必须严格跟手。
+    snapping.value = true
+  }
+
+  const now = performance.now()
+  const elapsed = now - dragLastAt
+  if (elapsed > 0) {
+    dragVelocity = (touch.clientX - dragLastX) / elapsed
+  }
+  dragLastX = touch.clientX
+  dragLastAt = now
+  dragOffset.value = constrainDrag(dx)
+}
+
+function settleDrag(target: number): void {
+  snapping.value = false
+  dragOffset.value = 0
+  if (target !== pageIndex.value) {
+    pageIndex.value = clampPage(target)
+    syncIndicatorsFromPage()
+  }
 }
 
 function onPagesTouchEnd(event: TouchEvent): void {
   const touch = event.changedTouches[0]
   if (!touch) return
-  if (event.touches.length > 0 || Date.now() - touchStartAt > 900) return
+  const wasDragging = dragAxis === 'horizontal'
+  dragAxis = 'none'
   const dx = touch.clientX - touchStartX
   const dy = touch.clientY - touchStartY
-  if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.3) return
+  const elapsed = Date.now() - touchStartAt
+
+  if (event.touches.length > 0) {
+    // 多指落下，放弃这次拖动。
+    if (wasDragging) settleDrag(pageIndex.value)
+    return
+  }
+
+  if (!wasDragging) {
+    // 没有 touchmove 的合成手势（或极快的轻扫）仍按位移兜底。
+    if (elapsed > 900) return
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.3) return
+    lastFlipAt = Date.now()
+    void turnPage(dx < 0 ? 1 : -1)
+    return
+  }
+
+  // 手指一直没真正拖动：按点按处理，交给 click 决定左右翻页。
+  if (dragPeak < TAP_SLOP) {
+    settleDrag(pageIndex.value)
+    return
+  }
+
   lastFlipAt = Date.now()
-  void turnPage(dx < 0 ? 1 : -1)
+  const width = pageWidth.value
+  if (width <= 0) {
+    settleDrag(pageIndex.value)
+    return
+  }
+
+  // 页内跟手用“实际位移”判断，章末/章首用“手指位移”判断：
+  // 边界处有阻尼，实际位移被压小了，用手指位移才不会变得难翻。
+  const offset = dragOffset.value
+  const fingerRatio = Math.abs(dx) / width
+  // 手指停住再松开不算轻扫，否则慢慢拖一下也会被当成快速滑动。
+  const velocity = performance.now() - dragLastAt > 100 ? 0 : dragVelocity
+  const flick = Math.abs(velocity) >= DRAG_FLICK_VELOCITY && Math.abs(dx) >= 24
+  const passed = Math.abs(offset) >= width * DRAG_TURN_RATIO || flick
+  const passedBoundary = fingerRatio >= DRAG_BOUNDARY_RATIO || flick
+
+  if (dx < 0) {
+    if (canDragToNextPage()) {
+      settleDrag(passed ? pageIndex.value + 1 : pageIndex.value)
+      return
+    }
+    if (canGoNext.value && passedBoundary) {
+      // 章末：保留阻尼位移，等新章节排好版再整体替换（避免先弹回再跳）。
+      void turnPage(1)
+      return
+    }
+  } else if (dx > 0) {
+    if (canDragToPreviousPage()) {
+      settleDrag(passed ? pageIndex.value - 1 : pageIndex.value)
+      return
+    }
+    if (canGoPrevious.value && passedBoundary) {
+      void turnPage(-1)
+      return
+    }
+  }
+
+  settleDrag(pageIndex.value)
+}
+
+function onPagesTouchCancel(): void {
+  if (dragAxis !== 'horizontal') return
+  dragAxis = 'none'
+  settleDrag(pageIndex.value)
 }
 
 function onPagesClick(event: MouseEvent): void {
@@ -628,15 +815,42 @@ watch(
   { flush: 'pre' },
 )
 
-watch(tocOpen, async (open) => {
+/** 把当前章节滚动到目录可视区域中间。 */
+function scrollTocToCurrentChapter(): void {
+  const list = tocListRef.value
+  const active = list?.querySelector<HTMLElement>('[aria-current="location"]')
+  const body = list?.closest<HTMLElement>('.app-dialog__body')
+  if (!active || !body) return
+
+  const bodyRect = body.getBoundingClientRect()
+  const activeRect = active.getBoundingClientRect()
+  const target =
+    body.scrollTop +
+    (activeRect.top - bodyRect.top) -
+    (body.clientHeight - activeRect.height) / 2
+  body.scrollTop = Math.max(0, target)
+}
+
+/**
+ * 目录弹层由 BaseDialog 异步 showModal，打开瞬间内容还没有布局，
+ * 这里等滚动容器真正有了高度再定位，否则 scrollTop 会被重置为 0。
+ */
+function scrollTocWhenReady(attempt = 0): void {
+  const body = tocListRef.value?.closest<HTMLElement>('.app-dialog__body')
+  if (body && body.clientHeight > 0) {
+    if (!tocQuery.value) scrollTocToCurrentChapter()
+    return
+  }
+  if (attempt >= 24) return
+  requestAnimationFrame(() => scrollTocWhenReady(attempt + 1))
+}
+
+watch(tocOpen, (open) => {
   if (!open) {
     tocQuery.value = ''
     return
   }
-  await nextTick()
-  if (tocQuery.value) return
-  const active = tocListRef.value?.querySelector<HTMLElement>('[aria-current="location"]')
-  active?.scrollIntoView({ block: 'center' })
+  requestAnimationFrame(() => scrollTocWhenReady())
 })
 
 watch(tocQuery, async () => {
@@ -655,6 +869,7 @@ watch(
 )
 
 onMounted(() => {
+  document.documentElement.classList.add('reader-open')
   window.addEventListener('resize', onViewportResize)
   window.visualViewport?.addEventListener('resize', onViewportResize)
   window.addEventListener('keydown', onReaderKeydown)
@@ -662,9 +877,11 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  document.documentElement.classList.remove('reader-open')
   disposed = true
   loadSerial += 1
   if (reflowTimer) clearTimeout(reflowTimer)
+  if (chapterSwapTimer) clearTimeout(chapterSwapTimer)
   window.removeEventListener('resize', onViewportResize)
   window.visualViewport?.removeEventListener('resize', onViewportResize)
   window.removeEventListener('keydown', onReaderKeydown)
@@ -745,10 +962,15 @@ onBeforeUnmount(() => {
         ref="pagesRef"
         class="reader-pages"
         @touchstart.passive="onPagesTouchStart"
+        @touchmove.passive="onPagesTouchMove"
         @touchend="onPagesTouchEnd"
+        @touchcancel="onPagesTouchCancel"
         @click="onPagesClick"
       >
-        <div class="reader-pages__viewport">
+        <div
+          class="reader-pages__viewport"
+          :class="{ 'is-chapter-swap': chapterSwapping }"
+        >
           <article
             ref="articleRef"
             class="reader-article"

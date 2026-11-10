@@ -218,11 +218,105 @@ async function main() {
       )
     }
 
+    /** 逐段发送触摸事件，模拟手指按住拖动（跟手翻页）。 */
+    async function dragTouch(type, clientX) {
+      await page.locator('.reader-pages').evaluate(
+        (element, [eventType, x]) => {
+          const point = new Touch({
+            identifier: 1,
+            target: element,
+            clientX: x,
+            clientY: 420,
+          })
+          element.dispatchEvent(
+            new TouchEvent(eventType, {
+              bubbles: true,
+              cancelable: true,
+              touches: eventType === 'touchend' ? [] : [point],
+              changedTouches: [point],
+            }),
+          )
+        },
+        [type, clientX],
+      )
+    }
+
     async function noHorizontalOverflow(label) {
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - window.innerWidth,
       )
       assert(overflow <= 1, `${label} 在 390px 宽度下没有横向溢出`)
+    }
+
+    async function readReaderState() {
+      return page.evaluate(() => {
+        const article = document.querySelector('.reader-article')
+        return {
+          chapter:
+            document.querySelector('.chapter-heading h2')?.textContent?.trim() ?? '',
+          indicator:
+            document.querySelector('.reader-page-indicator')?.textContent?.trim() ?? '',
+          transform: article ? getComputedStyle(article).transform : '',
+        }
+      })
+    }
+
+    /** 逐帧记录阅读页状态，用来确认换章后没有“先画错页码再跳回来”。 */
+    function recordReaderFrames(durationMs = 900) {
+      return page.evaluate((duration) => {
+        const frames = []
+        const started = performance.now()
+        const sample = () => {
+          const article = document.querySelector('.reader-article')
+          return {
+            chapter:
+              document.querySelector('.chapter-heading h2')?.textContent?.trim() ?? '',
+            indicator:
+              document.querySelector('.reader-page-indicator')?.textContent?.trim() ?? '',
+            transform: article ? getComputedStyle(article).transform : '',
+          }
+        }
+        return new Promise((resolve) => {
+          const record = () => {
+            frames.push(sample())
+            if (performance.now() - started >= duration) {
+              resolve(frames)
+              return
+            }
+            requestAnimationFrame(record)
+          }
+          requestAnimationFrame(record)
+        })
+      }, durationMs)
+    }
+
+    async function turnUntilChapterEnd(limit = 40) {
+      for (let step = 0; step < limit; step += 1) {
+        const current = await readReaderState()
+        const [pageNo, total] = current.indicator.split(/\s*\/\s*/).map(Number)
+        if (pageNo === total) return current
+        await page.keyboard.press('ArrowRight')
+        await page.waitForTimeout(260)
+      }
+      return readReaderState()
+    }
+
+    async function assertChapterTurnLandsDirectly(direction, label) {
+      const before = await readReaderState()
+      const framesPromise = recordReaderFrames(900)
+      await page.waitForTimeout(40)
+      await page.keyboard.press(direction > 0 ? 'ArrowRight' : 'ArrowLeft')
+      const frames = await framesPromise
+      const firstOfNewChapter = frames.find((frame) => frame.chapter !== before.chapter)
+      const settled = frames[frames.length - 1]
+      assert(
+        Boolean(firstOfNewChapter) &&
+          firstOfNewChapter.chapter === settled.chapter &&
+          firstOfNewChapter.indicator === settled.indicator &&
+          firstOfNewChapter.transform === settled.transform,
+        `${label}：新章节第一次绘出时就停在目标页码，不会再跳一次`,
+      )
+      return settled
     }
 
     await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
@@ -261,8 +355,52 @@ async function main() {
     await page.locator('.reader-shell[aria-busy="false"]').waitFor()
     assert(true, '导入后自动打开阅读器，并保留标题前的开篇')
 
+    const readerLock = await page.evaluate(() => {
+      const pages = document.querySelector('.reader-pages')
+      return {
+        readerOpen: document.documentElement.classList.contains('reader-open'),
+        touchAction: pages ? getComputedStyle(pages).touchAction : '',
+        bodyPosition: getComputedStyle(document.body).position,
+        bodyOverflow: getComputedStyle(document.body).overflow,
+        htmlTouchAction: getComputedStyle(document.documentElement).touchAction,
+        viewport:
+          document
+            .querySelector('meta[name="viewport"]')
+            ?.getAttribute('content') ?? '',
+      }
+    })
+    assert(
+      readerLock.readerOpen &&
+        readerLock.touchAction === 'none' &&
+        readerLock.bodyPosition === 'fixed' &&
+        readerLock.bodyOverflow === 'hidden',
+      '阅读页锁定整页滚动，手指上下拖动不会带动窗口',
+    )
+    assert(
+      readerLock.htmlTouchAction === 'manipulation' &&
+        readerLock.viewport.includes('user-scalable=no') &&
+        readerLock.viewport.includes('maximum-scale=1'),
+      '页面禁用浏览器双击放大与双指缩放',
+    )
+
     await page.getByRole('button', { name: '打开目录' }).click()
     await page.locator('dialog[open]').waitFor({ state: 'visible' })
+    const dialogLock = await page.evaluate(() => {
+      const dialog = document.querySelector('dialog[open]')
+      return {
+        dialogOpen: document.documentElement.classList.contains('dialog-open'),
+        bodyPosition: getComputedStyle(document.body).position,
+        dialogOverflow: dialog ? getComputedStyle(dialog).overflow : '',
+        bodyOverscroll: getComputedStyle(document.body).overscrollBehavior,
+      }
+    })
+    assert(
+      dialogLock.dialogOpen &&
+        dialogLock.bodyPosition === 'fixed' &&
+        dialogLock.dialogOverflow === 'hidden' &&
+        dialogLock.bodyOverscroll === 'none',
+      '打开目录时整页被固定，面板不会跟着手势整体移动',
+    )
     await page.fill('.toc-search__input', '第二章')
     await page.waitForTimeout(300)
     const filteredCount = await page.locator('.toc-item').count()
@@ -313,6 +451,19 @@ async function main() {
     await page.locator('.reader-shell[aria-busy="false"]').waitFor()
     assert(true, '阅读器可从目录跳转到指定章节')
 
+    await page.waitForTimeout(300)
+    const afterDialog = await page.evaluate(() => ({
+      dialogOpen: document.documentElement.classList.contains('dialog-open'),
+      bodyPosition: getComputedStyle(document.body).position,
+      readerOpen: document.documentElement.classList.contains('reader-open'),
+    }))
+    assert(
+      !afterDialog.dialogOpen &&
+        afterDialog.bodyPosition === 'fixed' &&
+        afterDialog.readerOpen,
+      '关闭目录后仍保持阅读页的滚动锁定',
+    )
+
     const firstPage = await page.locator('.reader-page-indicator').textContent()
     await page.keyboard.press('ArrowRight')
     await page.waitForTimeout(500)
@@ -330,6 +481,81 @@ async function main() {
     assert(
       swipedPage?.trim() === secondPage?.trim(),
       '阅读器可左右滑动翻页',
+    )
+
+    // 跟手翻页：手指按住时页面跟着移动，两页同时可见；往回拖可以取消。
+    const pageBeforeDrag = (await page.locator('.reader-page-indicator').textContent())?.trim()
+    const articleWidth = await page
+      .locator('.reader-article')
+      .evaluate((element) => element.clientWidth)
+    await dragTouch('touchstart', 330)
+    for (let step = 1; step <= 6; step += 1) {
+      await dragTouch('touchmove', 330 - step * 20)
+      await page.waitForTimeout(16)
+    }
+    const draggingState = await page.evaluate(() => {
+      const article = document.querySelector('.reader-article')
+      const pages = document.querySelector('.reader-pages')?.getBoundingClientRect()
+      const matrix = new DOMMatrixReadOnly(
+        article ? getComputedStyle(article).transform : 'none',
+      )
+      const readOffset = (x) => {
+        if (!pages || !Number.isFinite(x)) return null
+        const range = document.caretRangeFromPoint(x, pages.top + 200)
+        return range ? range.startOffset : null
+      }
+      return {
+        translateX: Math.round(matrix.m41),
+        indicator:
+          document.querySelector('.reader-page-indicator')?.textContent?.trim() ?? '',
+        leftOffset: readOffset(pages ? pages.left + 24 : NaN),
+        rightOffset: readOffset(pages ? pages.right - 24 : NaN),
+      }
+    })
+    const dragPageNo = Number((pageBeforeDrag ?? '').split(/\s*\/\s*/)[0])
+    // 跟手位移 = 当前 transform 相对本页起始位置的偏移。
+    const dragDelta =
+      draggingState.translateX + (dragPageNo - 1) * articleWidth
+    assert(
+      dragDelta < -40 &&
+        dragDelta > -articleWidth * 0.9 &&
+        draggingState.indicator === pageBeforeDrag &&
+        draggingState.leftOffset !== null &&
+        draggingState.rightOffset !== null &&
+        draggingState.rightOffset > draggingState.leftOffset,
+      `拖动时页面跟手位移，左右两页文字同时可见（位移 ${Math.round(dragDelta)}px / 页宽 ${articleWidth}）`,
+    )
+
+    for (let step = 1; step <= 6; step += 1) {
+      await dragTouch('touchmove', 210 + step * 20)
+      await page.waitForTimeout(16)
+    }
+    await dragTouch('touchend', 330)
+    await page.waitForTimeout(420)
+    assert(
+      (await page.locator('.reader-page-indicator').textContent())?.trim() ===
+        pageBeforeDrag,
+      '拖回原位松手取消翻页，不改变当前页',
+    )
+
+    await dragTouch('touchstart', 330)
+    for (let step = 1; step <= 6; step += 1) {
+      await dragTouch('touchmove', 330 - step * 20)
+      await page.waitForTimeout(16)
+    }
+    await dragTouch('touchend', 210)
+    await page.waitForTimeout(520)
+    const afterDragPage = (await page.locator('.reader-page-indicator').textContent())?.trim()
+    assert(
+      afterDragPage !== pageBeforeDrag,
+      '拖动超过阈值松手翻到下一页',
+    )
+    await page.keyboard.press('ArrowLeft')
+    await page.waitForTimeout(520)
+    assert(
+      (await page.locator('.reader-page-indicator').textContent())?.trim() ===
+        pageBeforeDrag,
+      '拖动翻页后可以用方向键回到原页',
     )
 
     const pagedPercent = await page.locator('.chapter-heading__meta').textContent()
@@ -495,10 +721,10 @@ async function main() {
     await page.locator('#txt-file-input').waitFor({ state: 'attached' })
     const offlineStory = [
       '第一章 离线灯火',
-      '断网以后，书页仍然可以翻开。'.repeat(12),
+      '断网以后，书页仍然可以翻开。'.repeat(60),
       '',
       '第二章 风停',
-      '故事停在这里，但本地数据还在。'.repeat(12),
+      '故事停在这里，但本地数据还在。'.repeat(60),
     ].join('\n')
     await page.setInputFiles('#txt-file-input', {
       name: '离线小记.txt',
@@ -512,6 +738,23 @@ async function main() {
     await waitForText('.chapter-heading h2', '第一章 离线灯火')
     assert(true, '断网状态下仍可导入 TXT 并开始阅读')
     await screenshot('08-offline-reader.png')
+
+    // 跨章翻页：新章节必须“一次画对”，否则读者会看到文字先出现再跳一下。
+    await turnUntilChapterEnd()
+    const forwardTurn = await assertChapterTurnLandsDirectly(
+      1,
+      '从章末翻到下一章',
+    )
+    assert(
+      /^1 \//.test(forwardTurn.indicator),
+      '从章末翻到下一章落在新章节第 1 页',
+    )
+    const backwardTurn = await assertChapterTurnLandsDirectly(-1, '从章首翻回上一章')
+    const [backPageNo, backTotal] = backwardTurn.indicator.split(/\s*\/\s*/).map(Number)
+    assert(
+      backPageNo === backTotal && backTotal > 1,
+      '从章首翻回上一章直接落在上一章最后一页',
+    )
 
     await page.getByRole('button', { name: '返回书架' }).first().click()
     await page.locator('.bookshelf-page').waitFor({ state: 'visible' })

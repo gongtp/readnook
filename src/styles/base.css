@@ -9,6 +9,8 @@ html {
   background: var(--bg);
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* 关掉双击放大，避免在阅读页误触把界面放大 */
+  touch-action: manipulation;
 }
 
 body {
@@ -679,6 +681,8 @@ input[type="checkbox"] {
   border: 0;
   border-radius: var(--radius-lg);
   background: transparent;
+  overflow: hidden;
+  overscroll-behavior: contain;
   color: var(--text);
 }
 
@@ -701,6 +705,29 @@ input[type="checkbox"] {
 html.dialog-open,
 html.dialog-open body {
   overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* 固定 body 才能真正挡住 iOS 的整页橡皮筋滚动，关闭弹层后恢复位置 */
+html.dialog-open body {
+  position: fixed;
+  top: var(--dialog-scroll-top, 0px);
+  right: 0;
+  left: 0;
+  width: 100%;
+}
+
+/* 阅读时整页不滚动，翻页手势由阅读器自己处理 */
+html.reader-open,
+html.reader-open body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html.reader-open body {
+  position: fixed;
+  inset: 0;
+  width: 100%;
 }
 
 .app-dialog__header {
@@ -720,6 +747,8 @@ html.dialog-open body {
   overflow: auto;
   padding: 18px 20px;
   overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
   color: var(--text-secondary);
   font-size: 14px;
   line-height: 1.65;
