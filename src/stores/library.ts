@@ -9,11 +9,13 @@ import {
 import type { Book, BookshelfEntry } from '@/types/models'
 import { toProgressPercent } from '@/domain/progress'
 import { getErrorMessage } from '@/utils/errors'
+import { flushReadingProgress } from '@/services/readingProgress'
 
 export type ShelfSort = 'recent' | 'imported' | 'title'
 
 export interface ShelfItem extends BookshelfEntry {
   percent: number
+  status: 'unread' | 'reading' | 'finished'
 }
 
 export const useLibraryStore = defineStore('library', () => {
@@ -54,15 +56,21 @@ export const useLibraryStore = defineStore('library', () => {
     loading.value = true
     error.value = ''
     try {
+      await flushReadingProgress()
       const books = await listBooks()
       await backfillFrontMatterCounts(books)
       const progressMap = await getProgressMap(books.map((book) => book.id))
-      const next = books.map((book) => {
+      const next = books.map((book): ShelfItem => {
         const progress = progressMap.get(book.id) ?? null
+        const percent = toProgressPercent(progress?.bookProgress ?? 0)
+        // 导入时也有零进度记录，且 lastReadAt 与 importedAt 相等。
+        const started = book.lastReadAt > book.importedAt ||
+          (progress !== null && (progress.bookProgress > 0 || progress.chapterIndex > 0 || progress.charOffset > 0))
         return {
           book,
           progress,
-          percent: progress ? toProgressPercent(progress.bookProgress) : 0,
+          percent,
+          status: percent >= 100 ? 'finished' : started ? 'reading' : 'unread',
         }
       })
       entries.value = next.sort(

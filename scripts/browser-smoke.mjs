@@ -268,7 +268,14 @@ async function main() {
         const started = performance.now()
         const sample = () => {
           const article = document.querySelector('.reader-article')
+          const viewport = document.querySelector('.reader-pages__viewport').getBoundingClientRect()
+          const neighborVisible = [...document.querySelectorAll('.reader-neighbor')].some(element => {
+            const rect = element.getBoundingClientRect()
+            return rect.left < viewport.right - 2 && rect.right > viewport.left + 2
+              && Math.abs(rect.left - viewport.left) > 2
+          })
           return {
+            neighborVisible,
             chapter:
               document.querySelector('.chapter-heading h2')?.textContent?.trim() ?? '',
             indicator:
@@ -309,6 +316,7 @@ async function main() {
       const frames = await framesPromise
       const firstOfNewChapter = frames.find((frame) => frame.chapter !== before.chapter)
       const settled = frames[frames.length - 1]
+      assert(frames.some(frame => frame.neighborVisible), `${label}：相邻章节随翻页滑入视口`)
       assert(
         Boolean(firstOfNewChapter) &&
           firstOfNewChapter.chapter === settled.chapter &&
@@ -360,7 +368,7 @@ async function main() {
       return {
         readerOpen: document.documentElement.classList.contains('reader-open'),
         touchAction: pages ? getComputedStyle(pages).touchAction : '',
-        bodyPosition: getComputedStyle(document.body).position,
+        scrollRange: document.documentElement.scrollHeight - document.documentElement.clientHeight,
         bodyOverflow: getComputedStyle(document.body).overflow,
         htmlTouchAction: getComputedStyle(document.documentElement).touchAction,
         viewport:
@@ -372,7 +380,7 @@ async function main() {
     assert(
       readerLock.readerOpen &&
         readerLock.touchAction === 'none' &&
-        readerLock.bodyPosition === 'fixed' &&
+        readerLock.scrollRange === 0 &&
         readerLock.bodyOverflow === 'hidden',
       '阅读页锁定整页滚动，手指上下拖动不会带动窗口',
     )
@@ -396,7 +404,7 @@ async function main() {
       const panelRect = rect(panel)
       return {
         dialogOpen: document.documentElement.classList.contains('dialog-open'),
-        bodyPosition: getComputedStyle(document.body).position,
+        scrollRange: document.documentElement.scrollHeight - document.documentElement.clientHeight,
         dialogOverflow: dialogStyle?.overflow ?? '',
         dialogPosition: dialogStyle?.position ?? '',
         dialogBottom: dialogRect ? Math.round(dialogRect.bottom) : null,
@@ -413,7 +421,7 @@ async function main() {
     })
     assert(
       dialogLock.dialogOpen &&
-        dialogLock.bodyPosition === 'fixed' &&
+        dialogLock.scrollRange === 0 &&
         dialogLock.dialogOverflow === 'hidden' &&
         dialogLock.bodyOverscroll === 'none',
       '打开目录时整页被固定，面板不会跟着手势整体移动',
@@ -538,12 +546,12 @@ async function main() {
     await page.waitForTimeout(300)
     const afterDialog = await page.evaluate(() => ({
       dialogOpen: document.documentElement.classList.contains('dialog-open'),
-      bodyPosition: getComputedStyle(document.body).position,
+      scrollRange: document.documentElement.scrollHeight - document.documentElement.clientHeight,
       readerOpen: document.documentElement.classList.contains('reader-open'),
     }))
     assert(
       !afterDialog.dialogOpen &&
-        afterDialog.bodyPosition === 'fixed' &&
+        afterDialog.scrollRange === 0 &&
         afterDialog.readerOpen,
       '关闭目录后仍保持阅读页的滚动锁定',
     )
@@ -598,7 +606,7 @@ async function main() {
     // 跟手翻页：手指按住时页面跟着移动，两页同时可见；往回拖可以取消。
     const pageBeforeDrag = (await page.locator('.reader-page-indicator').textContent())?.trim()
     const articleWidth = await page
-      .locator('.reader-article')
+      .locator('.reader-pages__viewport > .reader-article')
       .evaluate((element) => element.clientWidth)
     await dragTouch('touchstart', 330)
     for (let step = 1; step <= 6; step += 1) {
@@ -670,7 +678,7 @@ async function main() {
       '拖动翻页后可以用方向键回到原页',
     )
 
-    const pagedPercent = await page.locator('.chapter-heading__meta').textContent()
+    const pagedPercent = await page.locator('.reader-pages__viewport > article .chapter-heading__meta').textContent()
     assert(
       pagedPercent?.includes('全书') ?? false,
       '翻页后显示章节与全书阅读百分比',
@@ -689,9 +697,17 @@ async function main() {
       .filter({ hasText: '阅读设置' })
       .click()
     await page.locator('dialog[open]').waitFor({ state: 'visible' })
-    await page.getByRole('button', { name: /深色/ }).click()
-    const theme = await page.evaluate(() => document.documentElement.dataset.theme)
-    assert(theme === 'dark', '阅读设置可切换深色主题')
+    for (const [label, color] of [['护眼', '#eaf0e2'], ['深色', '#171916']]) {
+      await page.getByRole('button', { name: new RegExp(label) }).click()
+      const synced = await page.evaluate((expected) => {
+        const rgb = expected.slice(1).match(/../g).map(hex => parseInt(hex, 16))
+        return document.querySelector('meta[name="theme-color"]').content === expected
+          && ['html', 'body', '.reader-topbar'].every(selector =>
+            getComputedStyle(document.querySelector(selector)).backgroundColor ===
+              `rgb(${rgb.join(', ')})`)
+      }, color)
+      assert(synced, `阅读内切换${label}后，页面背景、顶栏和浏览器主题色同步`)
+    }
     await page.locator('dialog[open]').getByRole('button', { name: '关闭' }).click()
     await page.waitForTimeout(2_200)
     await screenshot('03-reader-dark.png')
@@ -851,8 +867,39 @@ async function main() {
     assert(true, '断网状态下仍可导入 TXT 并开始阅读')
     await screenshot('08-offline-reader.png')
 
+    await page.getByRole('button', { name: '返回书架' }).first().click()
+    await waitForText('.resume-card__copy h2', '离线小记')
+    const earlyCard = page.locator('.book-card').filter({ hasText: '离线小记' })
+    await page.getByRole('button', { name: /^在读/ }).click()
+    assert((await earlyCard.locator('.book-card__percent').textContent()).trim() === '在读',
+      '打开新书停在第一页，返回后即归入在读')
+    await page.getByRole('button', { name: /^未读/ }).click()
+    assert(await earlyCard.count() === 0, '零进度的在读书籍不再列入未读')
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await waitForText('.resume-card__eyebrow', '继续阅读')
+    await waitForText('.resume-card__copy h2', '离线小记')
+    await page.locator('.resume-card__link').click()
+    await waitForText('.chapter-heading h2', '第一章 离线灯火')
+    assert(true, '刷新后可从继续阅读打开最近读过的零进度书籍')
+
     // 跨章翻页：新章节必须“一次画对”，否则读者会看到文字先出现再跳一下。
     await turnUntilChapterEnd()
+    const beforeDrag = await readReaderState()
+    await dragTouch('touchstart', 300)
+    await dragTouch('touchmove', 130)
+    const visibleTitle = await page.locator('.reader-neighbor').evaluateAll(elements =>
+      elements.find(element => {
+        const view = element.parentElement.getBoundingClientRect()
+        const rect = element.getBoundingClientRect()
+        return rect.left > view.left && rect.left < view.right
+      })?.querySelector('h2')?.textContent.trim())
+    assert(visibleTitle && visibleTitle !== beforeDrag.chapter, '章末拖动时可看到下一章标题')
+    await dragTouch('touchmove', 300)
+    await dragTouch('touchend', 300)
+    await page.waitForTimeout(300)
+    const canceled = await readReaderState()
+    assert(canceled.chapter === beforeDrag.chapter && canceled.indicator === beforeDrag.indicator,
+      '跨章拖回后仍停在原章节原页')
     const forwardTurn = await assertChapterTurnLandsDirectly(
       1,
       '从章末翻到下一章',

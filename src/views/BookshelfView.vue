@@ -12,7 +12,6 @@ import {
   formatChapterLocation,
   formatRelativeTime,
 } from '@/utils/format'
-import { toProgressPercent } from '@/domain/progress'
 import { getErrorMessage } from '@/utils/errors'
 
 type ShelfFilter = 'all' | 'reading' | 'unread' | 'finished'
@@ -61,16 +60,16 @@ const loadMoreObserver =
 const readingCount = computed(
   () =>
     entries.value.filter(
-      (entry) => entry.percent > 0 && entry.percent < 100,
+      (entry) => entry.status === 'reading',
     ).length,
 )
 
 const finishedCount = computed(
-  () => entries.value.filter((entry) => entry.percent >= 100).length,
+  () => entries.value.filter((entry) => entry.status === 'finished').length,
 )
 
 const unreadCount = computed(
-  () => entries.value.filter((entry) => entry.percent <= 0).length,
+  () => entries.value.filter((entry) => entry.status === 'unread').length,
 )
 
 const totalCharsLabel = computed(() => {
@@ -87,7 +86,7 @@ const totalCharsLabel = computed(() => {
 
 const continueEntry = computed(() => {
   const reading = entries.value.find(
-    (entry) => entry.percent > 0 && entry.percent < 100,
+    (entry) => entry.status === 'reading',
   )
   return reading ?? entries.value[0] ?? null
 })
@@ -114,18 +113,8 @@ const activeFilterLabel = computed(
 
 const filteredEntries = computed(() => {
   const list = visibleEntries.value
-  if (shelfFilter.value === 'reading') {
-    return list.filter(
-      (entry) => entry.percent > 0 && entry.percent < 100,
-    )
-  }
-  if (shelfFilter.value === 'unread') {
-    return list.filter((entry) => entry.percent <= 0)
-  }
-  if (shelfFilter.value === 'finished') {
-    return list.filter((entry) => entry.percent >= 100)
-  }
-  return list
+  const filter = shelfFilter.value
+  return filter === 'all' ? list : list.filter(entry => entry.status === filter)
 })
 
 const displayedEntries = computed(() =>
@@ -141,15 +130,15 @@ const remainingEntries = computed(
 )
 
 const resumeLabel = computed(() => {
-  const percent = continueEntry.value?.percent ?? 0
-  if (percent >= 100) return '再读一遍'
-  return percent > 0 ? '继续阅读' : '从第一本开始'
+  const status = continueEntry.value?.status
+  if (status === 'finished') return '再读一遍'
+  return status === 'reading' ? '继续阅读' : '从第一本开始'
 })
 
 const resumeActionLabel = computed(() => {
-  const percent = continueEntry.value?.percent ?? 0
-  if (percent >= 100) return '重新打开'
-  return percent > 0 ? '接着上次读' : '打开这本书'
+  const status = continueEntry.value?.status
+  if (status === 'finished') return '重新打开'
+  return status === 'reading' ? '接着上次读' : '打开这本书'
 })
 
 watch([search, sort, shelfFilter], () => {
@@ -241,7 +230,7 @@ function bookLocation(entry: ShelfItem): string {
 }
 
 function chapterLabel(entry: ShelfItem): string {
-  if (entry.percent <= 0) {
+  if (entry.status === 'unread') {
     const total = numberedChapterCount(entry.book)
     return total > 0 ? `共 ${total} 章` : '暂无章节'
   }
@@ -249,8 +238,9 @@ function chapterLabel(entry: ShelfItem): string {
 }
 
 function progressLabel(entry: ShelfItem): string {
-  if (entry.percent >= 100) return '已读完'
-  if (entry.percent > 0) return `已读 ${entry.percent}%`
+  if (entry.status === 'finished') return '已读完'
+  if (entry.status === 'reading' && entry.percent === 0) return '在读'
+  if (entry.status === 'reading') return `已读 ${entry.percent}%`
   return '未开始'
 }
 
@@ -549,7 +539,7 @@ onMounted(() => {
             >
               <AppIcon name="trash" :size="14" />
             </button>
-            <span v-if="entry.percent >= 100" class="book-tile__state">读完</span>
+            <span v-if="entry.status === 'finished'" class="book-tile__state">读完</span>
           </div>
 
           <h2 class="book-card__title book-tile__title">
@@ -559,11 +549,11 @@ onMounted(() => {
           </h2>
           <p class="book-tile__meta">{{ chapterLabel(entry) }}</p>
           <div
-            v-if="entry.percent > 0"
+            v-if="entry.status !== 'unread'"
             class="progress-track book-tile__track"
             role="progressbar"
             :aria-label="`《${entry.book.title}》阅读进度`"
-            :aria-valuenow="toProgressPercent(entry.progress?.bookProgress ?? 0)"
+            :aria-valuenow="entry.percent"
             aria-valuemin="0"
             aria-valuemax="100"
           >
@@ -571,11 +561,11 @@ onMounted(() => {
           </div>
           <div
             class="book-tile__foot"
-            :class="{ 'book-tile__foot--empty': entry.percent <= 0 }"
+            :class="{ 'book-tile__foot--empty': entry.status === 'unread' }"
           >
             <span
               class="book-card__percent"
-              :class="{ 'book-card__percent--done': entry.percent >= 100 }"
+              :class="{ 'book-card__percent--done': entry.status === 'finished' }"
             >
               {{ progressLabel(entry) }}
             </span>
@@ -612,11 +602,11 @@ onMounted(() => {
             </div>
 
             <div
-              v-if="entry.percent > 0"
+              v-if="entry.status !== 'unread'"
               class="progress-track"
               role="progressbar"
               :aria-label="`《${entry.book.title}》阅读进度`"
-              :aria-valuenow="toProgressPercent(entry.progress?.bookProgress ?? 0)"
+              :aria-valuenow="entry.percent"
               aria-valuemin="0"
               aria-valuemax="100"
             >
@@ -626,7 +616,7 @@ onMounted(() => {
             <div class="book-card__foot">
               <span
                 class="book-card__percent"
-                :class="{ 'book-card__percent--done': entry.percent >= 100 }"
+                :class="{ 'book-card__percent--done': entry.status === 'finished' }"
               >
                 {{ progressLabel(entry) }}
               </span>
@@ -634,7 +624,7 @@ onMounted(() => {
                 :to="library.readerPath(entry.book.id)"
                 class="book-card__continue"
               >
-                {{ entry.percent > 0 ? '继续阅读' : '开始阅读' }}
+                {{ entry.status !== 'unread' ? '继续阅读' : '开始阅读' }}
                 <AppIcon name="chevron-right" :size="15" />
               </RouterLink>
             </div>

@@ -13,7 +13,7 @@ import type { ReaderSettings } from '@/types/models'
 
 const THEME_COLORS: Record<ReaderSettings['theme'], string> = {
   paper: '#f6efe3',
-  sepia: '#edf1e5',
+  sepia: '#eaf0e2',
   dark: '#171916',
 }
 

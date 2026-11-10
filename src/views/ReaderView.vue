@@ -9,6 +9,7 @@ import {
 } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
+import ChapterPageContent from '@/components/ChapterPageContent.vue'
 import BaseDialog from '@/components/BaseDialog.vue'
 import ReaderSettingsPanel from '@/components/ReaderSettingsPanel.vue'
 import {
@@ -71,7 +72,7 @@ const settingsOpen = ref(false)
 
 const pagesRef = ref<HTMLElement | null>(null)
 const articleRef = ref<HTMLElement | null>(null)
-const chapterTextRef = ref<HTMLElement | null>(null)
+const chapterTextRef = computed(() => articleRef.value?.querySelector<HTMLElement>('.chapter-text'))
 const tocListRef = ref<HTMLElement | null>(null)
 
 const pageIndex = ref(0)
@@ -123,8 +124,35 @@ const canGoNext = computed(() => {
   const order = currentChapter.value?.order ?? 0
   return order < chapters.value.length - 1
 })
-const hasContent = computed(() => currentContent.value.length > 0)
-const isAutoSplit = computed(() => currentChapter.value?.autoSplit ?? false)
+function adjacentPage(direction: -1 | 1) {
+  const target = computed(() => {
+    const chapter = currentChapter.value
+    const atEdge = direction < 0 ? pageIndex.value === 0 : pageIndex.value === pageCount.value - 1
+    return chapter && atEdge ? chapters.value[chapter.order + direction] : undefined
+  })
+  const preview = ref<{ chapter: ChapterMeta; content: string; direction: -1 | 1; offset: number }>()
+  let ready: Promise<void> = Promise.resolve()
+  watch(target, (chapter, _, onCleanup) => {
+    preview.value = undefined
+    if (!chapter) return
+    let active = true
+    onCleanup(() => { active = false })
+    ready = getChapterContent(chapter.id).then(content => {
+      if (active) preview.value = {
+        chapter, content, direction,
+        offset: direction > 0 ? 0 : Math.max(0, chapter.charCount - 1),
+      }
+    }).catch(() => { /* 实际翻页时由 loadChapter 重试并处理读取错误。 */ })
+  }, { immediate: true })
+  return { preview, wait: () => ready }
+}
+const previousPage = adjacentPage(-1)
+const nextPage = adjacentPage(1)
+const neighbors = computed(() => [previousPage.preview.value, nextPage.preview.value].filter(page => !!page))
+
+function positionNeighbor(element: unknown, direction: -1 | 1): void {
+  if (direction < 0 && element instanceof HTMLElement) element.scrollLeft = element.scrollWidth
+}
 const frontMatterCount = computed(() => countFrontMatterChapters(chapters.value))
 const numberedChapterCount = computed(() =>
   Math.max(chapters.value.length - frontMatterCount.value, 0),
@@ -311,6 +339,7 @@ async function loadChapter(
   chapterKey: string,
   requestedOffset: number | null,
   updateRoute = true,
+  turnedContent?: string,
 ): Promise<void> {
   const activeBook = book.value
   if (!activeBook) return
@@ -329,7 +358,7 @@ async function loadChapter(
 
   chapterLoading.value = true
   try {
-    const content = await getChapterContent(chapter.id)
+    const content = turnedContent ?? await getChapterContent(chapter.id)
     if (disposed) return
     // 等字体时旧页面还留在屏幕上，不会让读者看到半成品。
     await waitForFonts()
@@ -342,9 +371,6 @@ async function loadChapter(
     // 标题先进入 DOM；正文写入后立刻同步测量分页，
     // 这样新章节第一次被绘出来时就已经停在正确的页码上。
     await nextTick()
-    if (chapterTextRef.value) {
-      chapterTextRef.value.textContent = content
-    }
 
     const offset = clampCharOffset(
       requestedOffset ??
@@ -354,7 +380,7 @@ async function loadChapter(
       chapter.charCount,
     )
     await paginateAt(offset)
-    markChapterSwap()
+    if (turnedContent === undefined) markChapterSwap()
     await nextTick()
     await waitForPaint()
     snapping.value = false
@@ -477,7 +503,24 @@ async function goToAdjacent(direction: -1 | 1): Promise<void> {
     toast.show(direction > 0 ? '已经是最后一章。' : '已经是第一章。', 'info', 2_000)
     return
   }
-  await loadChapter(target.chapterKey, 0, true)
+  chapterLoading.value = true
+  const adjacent = direction > 0 ? nextPage : previousPage
+  await adjacent.wait()
+  if (disposed || currentChapter.value !== chapter) return
+  const preview = adjacent.preview.value
+  if (preview && preview.chapter.id === target.id) {
+    await nextTick()
+    const article = articleRef.value
+    article?.getBoundingClientRect()
+    snapping.value = false
+    dragOffset.value = -direction * pageStride.value
+    await nextTick()
+    await Promise.allSettled((article?.getAnimations() ?? []).map(animation => animation.finished))
+    if (disposed || currentChapter.value !== chapter) return
+    await loadChapter(target.chapterKey, preview.offset, true, preview.content)
+  } else {
+    await loadChapter(target.chapterKey, direction > 0 ? 0 : Math.max(0, target.charCount - 1))
+  }
 }
 
 async function jumpToChapter(chapterKey: string, offset = 0): Promise<void> {
@@ -571,10 +614,6 @@ async function turnPage(direction: -1 | 1): Promise<void> {
       goToPage(pageIndex.value + 1)
       return
     }
-    if (!canGoNext.value) {
-      toast.show('已经是最后一章。', 'info', 2_000)
-      return
-    }
     await goToAdjacent(1)
     return
   }
@@ -583,12 +622,7 @@ async function turnPage(direction: -1 | 1): Promise<void> {
     goToPage(pageIndex.value - 1)
     return
   }
-  const previous = chapters.value[chapter.order - 1]
-  if (!previous) {
-    toast.show('已经是第一章。', 'info', 2_000)
-    return
-  }
-  await loadChapter(previous.chapterKey, Math.max(previous.charCount - 1, 0), true)
+  await goToAdjacent(-1)
 }
 
 const DRAG_START_THRESHOLD = 12
@@ -596,7 +630,7 @@ const DRAG_START_THRESHOLD = 12
 const TAP_SLOP = 20
 /** 松手时位移超过页宽的这个比例就翻页，否则弹回原页。 */
 const DRAG_TURN_RATIO = 0.28
-/** 章末/章首没有相邻页可跟手，手指拖到这个比例松手就换章。 */
+/** 保留章末和章首原有的换章手势阈值。 */
 const DRAG_BOUNDARY_RATIO = 0.12
 const DRAG_FLICK_VELOCITY = 0.45
 const DRAG_MAX_RATIO = 0.94
@@ -617,13 +651,14 @@ function rubberBand(value: number): number {
 
 function constrainDrag(delta: number): number {
   let value = delta
-  if (value < 0 && !canDragToNextPage()) value = rubberBand(value)
-  if (value > 0 && !canDragToPreviousPage()) value = rubberBand(value)
+  if (value < 0 && !canTurnNextPage.value) value = rubberBand(value)
+  if (value > 0 && !canTurnPreviousPage.value) value = rubberBand(value)
   const limit = pageWidth.value * DRAG_MAX_RATIO
   return Math.max(-limit, Math.min(limit, value))
 }
 
 function onPagesTouchStart(event: TouchEvent): void {
+  if (chapterLoading.value) return
   if (event.touches.length !== 1) return
   const touch = event.touches[0]
   if (!touch) return
@@ -633,7 +668,7 @@ function onPagesTouchStart(event: TouchEvent): void {
   touchStartY = touch.clientY
   touchStartAt = Date.now()
   dragLastX = touch.clientX
-  dragLastAt = touchStartAt
+  dragLastAt = performance.now()
   dragVelocity = 0
   dragPeak = 0
   dragAxis = 'none'
@@ -681,6 +716,7 @@ function settleDrag(target: number): void {
 }
 
 function onPagesTouchEnd(event: TouchEvent): void {
+  if (chapterLoading.value) return
   const touch = event.changedTouches[0]
   if (!touch) return
   const wasDragging = dragAxis === 'horizontal'
@@ -717,8 +753,6 @@ function onPagesTouchEnd(event: TouchEvent): void {
     return
   }
 
-  // 页内跟手用“实际位移”判断，章末/章首用“手指位移”判断：
-  // 边界处有阻尼，实际位移被压小了，用手指位移才不会变得难翻。
   const offset = dragOffset.value
   const fingerRatio = Math.abs(dx) / width
   // 手指停住再松开不算轻扫，否则慢慢拖一下也会被当成快速滑动。
@@ -733,7 +767,6 @@ function onPagesTouchEnd(event: TouchEvent): void {
       return
     }
     if (canGoNext.value && passedBoundary) {
-      // 章末：保留阻尼位移，等新章节排好版再整体替换（避免先弹回再跳）。
       void turnPage(1)
       return
     }
@@ -986,20 +1019,21 @@ onBeforeUnmount(() => {
             :class="{ 'is-snapping': snapping }"
             :style="articleStyle"
           >
-            <header class="chapter-heading">
-              <p class="chapter-heading__book">{{ book.title }}</p>
-              <h2>
-                {{ currentChapter.title }}
-                <span v-if="isAutoSplit" class="auto-badge">自动分段</span>
-              </h2>
-              <p class="chapter-heading__meta">
-                本章 {{ currentChapterPercent }}% · 全书 {{ currentBookPercent }}%
-              </p>
-            </header>
-
-            <div ref="chapterTextRef" class="chapter-text" />
-            <p v-if="!hasContent" class="empty-chapter">（本章无正文）</p>
+            <ChapterPageContent :book-title="book.title" :chapter="currentChapter"
+              :chapter-percent="currentChapterPercent" :book-percent="currentBookPercent"
+              :content="currentContent" />
           </article>
+          <div v-for="neighbor in neighbors" :key="neighbor.chapter.id"
+            :ref="element => positionNeighbor(element, neighbor.direction)"
+            class="reader-neighbor" :class="{ 'is-snapping': snapping }" aria-hidden="true" inert
+            :style="{ transform: `translateX(${neighbor.direction * pageStride + dragOffset}px)` }">
+            <article class="reader-article" :style="{ columnWidth: articleStyle.columnWidth, columnGap: articleStyle.columnGap }">
+              <ChapterPageContent :book-title="book.title" :chapter="neighbor.chapter"
+                :chapter-percent="toProgressPercent(calculateChapterProgress(neighbor.offset, neighbor.chapter.charCount))"
+                :book-percent="toProgressPercent(calculateBookProgress(neighbor.chapter.startChar, neighbor.offset, book.totalChars))"
+                :content="neighbor.content" />
+            </article>
+          </div>
         </div>
 
         <p v-if="pageWidth > 0" class="reader-page-indicator" aria-hidden="true">

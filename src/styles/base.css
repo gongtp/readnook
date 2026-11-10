@@ -713,7 +713,7 @@ html.dialog-open body {
 }
 
 /* 固定 body 才能真正挡住 iOS 的整页橡皮筋滚动，关闭弹层后恢复位置 */
-html.dialog-open body {
+html.dialog-open:not(.reader-open) body {
   position: fixed;
   top: var(--dialog-scroll-top, 0px);
   right: 0;
@@ -724,14 +724,12 @@ html.dialog-open body {
 /* 阅读时整页不滚动，翻页手势由阅读器自己处理 */
 html.reader-open,
 html.reader-open body {
+  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
-}
-
-html.reader-open body {
-  position: fixed;
-  inset: 0;
-  width: 100%;
+  background: var(--reader-bg);
+  transition: none;
 }
 
 .app-dialog__header {
