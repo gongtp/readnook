@@ -1,4 +1,5 @@
-import { BACKUP_FORMAT, BACKUP_VERSION } from '@/config/app'
+import { BACKUP_FORMAT, BACKUP_VERSION, MAX_BOOKMARKS_PER_BOOK, MAX_BOOKMARK_NOTE_CHARS } from '@/config/app'
+import { normalizeBookmarkNote } from '@/domain/bookmarks'
 import { normalizeReaderSettings } from '@/domain/readerSettings'
 import type {
   BackupBook,
@@ -22,7 +23,6 @@ export class BackupValidationError extends Error {
 
 const ENCODINGS: readonly TextEncoding[] = ['utf-8', 'gbk', 'gb18030']
 const MAX_BOOKS = 2_000
-const MAX_BOOKMARKS_PER_BOOK = 5_000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -129,6 +129,8 @@ function validateBookmark(
     charOffset: requireNonNegativeInteger(value.charOffset, `${field}.charOffset`),
     chapterTitle: requireString(value.chapterTitle, `${field}.chapterTitle`, 200),
     excerpt: requireString(value.excerpt, `${field}.excerpt`, 400),
+    note: value.note === undefined || value.note === '' ? undefined :
+      normalizeBookmarkNote(requireString(value.note, `${field}.note`, MAX_BOOKMARK_NOTE_CHARS)),
     createdAt: requireTimestamp(value.createdAt, `${field}.createdAt`),
   }
 }

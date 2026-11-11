@@ -493,21 +493,21 @@ async function main() {
         '在目录上横向拖动时面板和列表都不位移，只有纵向能滚',
       )
     }
-    await page.fill('.toc-search__input', '第二章')
+    await page.fill('dialog[open] .toc-search__input', '第二章')
     await page.waitForTimeout(300)
     const filteredCount = await page.locator('.toc-item').count()
     assert(filteredCount === 1, '目录搜索可按章节名过滤')
-    const tocSummaryText = await page.locator('.toc-summary').textContent()
+    const tocSummaryText = await page.locator('dialog[open] .toc-summary').textContent()
     assert(
       tocSummaryText?.includes('找到 1 章') ?? false,
       '目录搜索显示匹配数量',
     )
-    await page.locator('.toc-search__clear').click()
+    await page.locator('dialog[open] .toc-search__clear').click()
     await page.waitForTimeout(250)
     const fullCount = await page.locator('.toc-item').count()
     assert(fullCount > 1, '清除目录搜索后恢复完整列表')
 
-    const tocAllText = await page.locator('.toc-summary').textContent()
+    const tocAllText = await page.locator('dialog[open] .toc-summary').textContent()
     assert(
       tocAllText?.includes('共 6 章') ?? false,
       '目录章数不包含开篇',
@@ -528,7 +528,7 @@ async function main() {
     )
     await screenshot('50-toc-front-matter.png')
 
-    await page.fill('.toc-search__input', '1')
+    await page.fill('dialog[open] .toc-search__input', '1')
     await page.waitForTimeout(250)
     const digitRows = page.locator('.toc-item')
     assert(
@@ -536,7 +536,7 @@ async function main() {
         ((await digitRows.first().textContent())?.includes('第一章 雾起') ?? false),
       '目录数字搜索按正文序号匹配',
     )
-    await page.locator('.toc-search__clear').click()
+    await page.locator('dialog[open] .toc-search__clear').click()
     await page.waitForTimeout(200)
     await page.locator('.toc-item').filter({ hasText: '第一章 雾起' }).click()
     await waitForText('.chapter-heading h2', '第一章 雾起')
@@ -866,8 +866,48 @@ async function main() {
     await waitForText('dialog[open]', '第一章 雾起')
     const bookmarkCount = await page.locator('.bookmark-entry').count()
     assert(bookmarkCount === 1, '刷新后书签仍然存在')
+    const bookmarkExcerpt = (await page.locator('.bookmark-entry__excerpt').textContent()).trim()
+    assert(!bookmarkExcerpt.startsWith('…') && Array.from(bookmarkExcerpt).length <= 49, '书签摘录从保存位置向后简短展示，不带前文省略号')
+    assert((await page.locator('dialog[open] .toc-summary').textContent()).includes('共 1 个'), '书签列表显示数量与每本 5000 个上限')
+    await page.getByRole('button', { name: '当前位置已有书签' }).click()
+    assert(await page.locator('.bookmark-entry').count() === 1, '当前位置重复添加不会生成多余书签')
+    await page.getByRole('button', { name: '编辑书签备注：第一章 雾起' }).click()
+    const noteDialog = page.locator('dialog[open]').filter({ has: page.getByRole('heading', { name: '编辑书签备注' }) })
+    await noteDialog.locator('#bookmark-note').fill('人物出场：回看伏笔')
+    await noteDialog.getByRole('button', { name: '保存备注', exact: true }).click()
+    await page.locator('.bookmark-entry__note', { hasText: '人物出场：回看伏笔' }).waitFor()
+    await page.getByRole('searchbox', { name: '搜索书签' }).fill('伏笔')
+    assert(await page.locator('.bookmark-entry').count() === 1, '书签可按备注搜索')
+    await page.getByRole('searchbox', { name: '搜索书签' }).fill('不匹配的关键词')
+    await waitForText('dialog[open]', '没有找到匹配的书签')
+    await page.getByRole('button', { name: '清除书签搜索' }).click()
+    assert(await page.locator('.bookmark-entry').count() === 1, '清除搜索后恢复书签列表')
     await screenshot('04-bookmarks.png')
     await page.locator('dialog[open]').getByRole('button', { name: '关闭' }).click()
+
+    await page.keyboard.press('ArrowRight')
+    await page.locator('.reader-shell[aria-busy="false"]').waitFor()
+    await page.waitForTimeout(420)
+    await page.locator('.reader-bottombar button').filter({ hasText: '加书签' }).click()
+    await waitForText('.toast', '已添加书签')
+    await page.getByRole('button', { name: '查看书签' }).click()
+    await page.waitForFunction(() => document.querySelectorAll('.bookmark-entry').length === 2)
+    assert(!(await page.locator('.bookmark-entry').first().textContent()).includes('回看伏笔'), '书签默认按最新添加排序')
+    await page.getByLabel('书签排序').selectOption('position')
+    assert((await page.locator('.bookmark-entry').first().textContent()).includes('回看伏笔'), '书签可按章节和位置排序')
+    const temporaryBookmark = page.locator('.bookmark-entry').filter({ hasNotText: '回看伏笔' })
+    await temporaryBookmark.getByRole('button', { name: /^删除书签：/ }).click()
+    const deleteDialog = page.locator('dialog[open]').filter({ has: page.getByRole('heading', { name: '删除这个书签？' }) })
+    await deleteDialog.getByRole('button', { name: '取消', exact: true }).click()
+    assert(await page.locator('.bookmark-entry').count() === 2, '取消删除后书签仍保留')
+    await temporaryBookmark.getByRole('button', { name: /^删除书签：/ }).click()
+    await deleteDialog.getByRole('button', { name: '删除书签', exact: true }).click()
+    await page.waitForFunction(() => document.querySelectorAll('.bookmark-entry').length === 1)
+    assert(true, '确认删除后只移除选中的书签')
+    await page.locator('.bookmark-entry__main').click()
+    await page.locator('.reader-shell[aria-busy="false"]').waitFor()
+    await page.waitForTimeout(350)
+    assert(/^\s*2\s*\//.test(await page.locator('.reader-page-indicator').textContent()), '点击书签回到原章节的原位置')
 
     await page.getByRole('button', { name: '返回书架' }).first().click()
     await page.locator('.bookshelf-page').waitFor({ state: 'visible' })
@@ -963,6 +1003,15 @@ async function main() {
     await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
     await waitForText('.book-card__title', '雾中灯')
     assert(true, '恢复后的书籍重新出现在书架')
+    await page.locator('.book-card__title a').first().click()
+    await page.locator('.reader-shell[aria-busy="false"]').waitFor()
+    await page.getByRole('button', { name: '查看书签' }).click()
+    await page.locator('.bookmark-entry__note', { hasText: '人物出场：回看伏笔' }).waitFor()
+    assert(true, '备份恢复后书签备注仍然保留')
+    await page.locator('dialog[open]').getByRole('button', { name: '关闭' }).click()
+    await page.getByRole('button', { name: '返回书架' }).click()
+    await page.locator('.bookshelf-page').waitFor({ state: 'visible' })
+    await waitForText('.book-card__title', '雾中灯')
 
     await page.reload({ waitUntil: 'domcontentloaded' })
     await waitForText('.book-card__title', '雾中灯')
@@ -1075,7 +1124,7 @@ async function main() {
     }
 
     await page.getByRole('button', { name: '打开目录' }).click()
-    await page.fill('.toc-search__input', '99')
+    await page.fill('dialog[open] .toc-search__input', '99')
     await page.locator('.toc-item').filter({ hasText: '第99章 归途' }).click()
     await waitForText('.reader-topbar h1', '第99章 归途')
     await checkShelfState(2, 0, 99, '第99章实际进度超过99.5%')

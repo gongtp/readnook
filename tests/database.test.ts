@@ -13,6 +13,7 @@ import {
   listChapters,
   saveBookBundle,
   saveProgress,
+  updateBookmarkNote,
   type BookBundle,
 } from '@/db/libraryRepository'
 import {
@@ -20,6 +21,8 @@ import {
   saveReaderSettings,
 } from '@/db/settingsRepository'
 import type { Bookmark, ReaderSettings } from '@/types/models'
+import { MAX_BOOKMARKS_PER_BOOK } from '@/config/app'
+import { BOOKMARK_EXCERPT_VERSION } from '@/domain/bookmarks'
 
 const BOOK_ID = '11111111-1111-4111-8111-111111111111'
 const BOOK_ID_2 = '22222222-2222-4222-8222-222222222222'
@@ -205,6 +208,74 @@ describe('book persistence', () => {
 })
 
 describe('progress and bookmarks', () => {
+  it('refreshes legacy excerpts from the saved offset without moving or changing notes', async () => {
+    const bundle = makeBundle()
+    const before = '甲'.repeat(60)
+    const content = `${before}定位起点${'乙'.repeat(100)}`
+    bundle.chapters[0]!.content.content = content
+    bundle.chapters[0]!.meta.charCount = content.length
+    const original: Bookmark = {
+      ...bundle.bookmarks![0]!, chapterKey: 'ch_0000', chapterIndex: 0,
+      chapterTitle: '第一章', charOffset: before.length, excerpt: '…旧的前文和较长上下文…', note: '原备注',
+    }
+    bundle.bookmarks = [original]
+    await saveBookBundle(bundle, database)
+    const refreshed = (await listBookmarks(BOOK_ID, database))[0]!
+    expect(refreshed).toMatchObject({ ...original, excerpt: `定位起点${'乙'.repeat(44)}…`, excerptVersion: BOOKMARK_EXCERPT_VERSION })
+    expect(await database.bookmarks.get(original.id)).toEqual(refreshed)
+    await updateBookmarkNote(original.id, '新备注', database)
+    const reopened = (await listBookmarks(BOOK_ID, database))[0]!
+    expect(reopened.excerpt).toBe(refreshed.excerpt)
+    expect(reopened.note).toBe('新备注')
+    expect(reopened.charOffset).toBe(original.charOffset)
+  })
+
+  it('updates or removes notes without changing the bookmark location or timestamp', async () => {
+    const bundle = makeBundle()
+    await saveBookBundle(bundle, database)
+    const bookmark = bundle.bookmarks![0]!
+    const updated = await updateBookmarkNote(bookmark.id, '  人物出场\r\n值得回看  ', database)
+    expect(updated).toEqual({ ...bookmark, note: '人物出场\n值得回看' })
+    expect((await listBookmarks(BOOK_ID, database))[0]?.note).toBe(updated.note)
+    expect((await updateBookmarkNote(bookmark.id, '  ', database)).note).toBeUndefined()
+    await expect(updateBookmarkNote(bookmark.id, '甲'.repeat(301), database)).rejects.toThrow('最多 300')
+    await database.bookmarks.delete(bookmark.id)
+    await expect(updateBookmarkNote(bookmark.id, '备注', database)).rejects.toThrow('不存在')
+    expect(await database.bookmarks.count()).toBe(0)
+  })
+
+  it('prevents concurrent duplicate bookmarks but allows other locations', async () => {
+    const bundle = makeBundle()
+    await saveBookBundle(bundle, database)
+    const bookmark = { ...bundle.bookmarks![0]!, chapterKey: 'ch_0000', chapterIndex: 0, charOffset: 0 }
+    const results = await Promise.allSettled([
+      addBookmark({ ...bookmark, id: crypto.randomUUID() }, database),
+      addBookmark({ ...bookmark, id: crypto.randomUUID(), charOffset: 2 }, database),
+    ])
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    expect(await database.bookmarks.count()).toBe(2)
+    await addBookmark({ ...bookmark, id: crypto.randomUUID(), charOffset: 10 }, database)
+    expect(await database.bookmarks.count()).toBe(3)
+  })
+
+  it('enforces the per-book backup limit even for simultaneous additions', async () => {
+    const bundle = makeBundle()
+    await saveBookBundle(bundle, database)
+    const template = { ...bundle.bookmarks![0]!, chapterKey: 'ch_0000', chapterIndex: 0 }
+    await database.bookmarks.bulkAdd(Array.from({ length: MAX_BOOKMARKS_PER_BOOK - 2 }, (_, index) => ({
+      ...template, id: crypto.randomUUID(), charOffset: 100 + index * 5,
+    })))
+    const results = await Promise.allSettled([
+      addBookmark({ ...template, id: crypto.randomUUID(), charOffset: 0 }, database),
+      addBookmark({ ...template, id: crypto.randomUUID(), charOffset: 10 }, database),
+    ])
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    expect(await database.bookmarks.where('bookId').equals(BOOK_ID).count()).toBe(MAX_BOOKMARKS_PER_BOOK)
+    await saveBookBundle(makeBundle(BOOK_ID_2, HASH_2), database)
+    await addBookmark({ ...template, bookId: BOOK_ID_2, id: crypto.randomUUID(), charOffset: 0 }, database)
+    expect(await database.bookmarks.where('bookId').equals(BOOK_ID_2).count()).toBe(2)
+  })
+
   it('saves progress and updates the book read time', async () => {
     const bundle = makeBundle()
     await saveBookBundle(bundle, database)

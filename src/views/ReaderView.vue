@@ -21,6 +21,7 @@ import {
   listBookmarks,
   listChapters,
   touchBookReadTime,
+  updateBookmarkNote,
 } from '@/db/libraryRepository'
 import {
   calculateBookProgress,
@@ -48,6 +49,8 @@ import { createId } from '@/utils/id'
 import { formatRelativeTime } from '@/utils/format'
 import { getErrorMessage } from '@/utils/errors'
 import { pageTurnDuration, resistPageBoundary, resolvePageTurn } from '@/domain/pageTurn'
+import { BOOKMARK_EXCERPT_VERSION, createBookmarkExcerpt, filterBookmarks, type BookmarkSort } from '@/domain/bookmarks'
+import { MAX_BOOKMARKS_PER_BOOK, MAX_BOOKMARK_NOTE_CHARS } from '@/config/app'
 
 const route = useRoute()
 const router = useRouter()
@@ -69,6 +72,18 @@ const currentBookProgress = ref(0)
 const tocOpen = ref(false)
 const tocQuery = ref('')
 const bookmarksOpen = ref(false)
+const bookmarkQuery = ref('')
+const bookmarkSort = ref<BookmarkSort>('newest')
+const bookmarkVisibleLimit = ref(100)
+const addingBookmark = ref(false)
+const bookmarkEditorOpen = ref(false)
+const editingBookmark = ref<Bookmark | null>(null)
+const bookmarkNote = ref('')
+const savingBookmarkNote = ref(false)
+const bookmarkNoteError = ref('')
+const bookmarkDeleteOpen = ref(false)
+const deletingBookmark = ref<Bookmark | null>(null)
+const deletingBookmarkBusy = ref(false)
 const settingsOpen = ref(false)
 
 const pagesRef = ref<HTMLElement | null>(null)
@@ -190,6 +205,13 @@ const tocSummary = computed(() =>
 const canTurnPreviousPage = computed(
   () => canGoPrevious.value || pageIndex.value > 0,
 )
+const filteredBookmarks = computed(() => filterBookmarks(bookmarks.value, bookmarkQuery.value, bookmarkSort.value))
+const visibleBookmarks = computed(() => filteredBookmarks.value.slice(0, bookmarkVisibleLimit.value))
+const bookmarkSummary = computed(() => bookmarkQuery.value.trim()
+  ? `找到 ${filteredBookmarks.value.length} 个，共 ${bookmarks.value.length} 个`
+  : `共 ${bookmarks.value.length} 个，每本最多 ${MAX_BOOKMARKS_PER_BOOK} 个`)
+const currentBookmark = computed(() => bookmarks.value.find(bookmark =>
+  bookmark.chapterKey === currentChapter.value?.chapterKey && Math.abs(bookmark.charOffset - lastKnownOffset.value) <= 2))
 const canTurnNextPage = computed(
   () => canGoNext.value || pageIndex.value < pageCount.value - 1,
 )
@@ -559,19 +581,11 @@ async function jumpToBookmark(bookmark: Bookmark): Promise<void> {
 }
 
 function makeExcerpt(chapter: ChapterMeta, offset: number): string {
-  const content = currentContent.value
-  if (!content) return chapter.title
-  const start = Math.max(0, offset - 30)
-  const end = Math.min(content.length, offset + 90)
-  const excerpt = content
-    .slice(start, end)
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!excerpt) return chapter.title
-  return `${start > 0 ? '…' : ''}${excerpt}${end < content.length ? '…' : ''}`
+  return createBookmarkExcerpt(currentContent.value, offset, chapter.title)
 }
 
 async function addCurrentBookmark(): Promise<void> {
+  if (addingBookmark.value || chapterLoading.value || loading.value) return
   const chapter = currentChapter.value
   const activeBook = book.value
   if (!chapter || !activeBook) return
@@ -595,9 +609,15 @@ async function addCurrentBookmark(): Promise<void> {
     charOffset: offset,
     chapterTitle: chapter.title,
     excerpt: makeExcerpt(chapter, offset),
+    excerptVersion: BOOKMARK_EXCERPT_VERSION,
     createdAt: Date.now(),
   }
 
+  if (bookmarks.value.length >= MAX_BOOKMARKS_PER_BOOK) {
+    toast.show(`每本书最多支持 ${MAX_BOOKMARKS_PER_BOOK} 个书签，请先删除不需要的书签。`, 'info')
+    return
+  }
+  addingBookmark.value = true
   try {
     await addBookmark(bookmark)
     bookmarks.value = [bookmark, ...bookmarks.value]
@@ -606,18 +626,55 @@ async function addCurrentBookmark(): Promise<void> {
     toast.error(
       getErrorMessage(bookmarkError, '添加书签失败，请稍后重试。'),
     )
+  } finally {
+    addingBookmark.value = false
   }
 }
 
-async function removeBookmarkItem(bookmark: Bookmark): Promise<void> {
+function editBookmarkNote(bookmark: Bookmark): void {
+  editingBookmark.value = bookmark
+  bookmarkNote.value = bookmark.note ?? ''
+  bookmarkNoteError.value = ''
+  bookmarkEditorOpen.value = true
+}
+
+async function saveBookmarkNote(): Promise<void> {
+  const target = editingBookmark.value
+  if (!target || savingBookmarkNote.value) return
+  savingBookmarkNote.value = true
+  bookmarkNoteError.value = ''
+  try {
+    const updated = await updateBookmarkNote(target.id, bookmarkNote.value)
+    bookmarks.value = bookmarks.value.map(bookmark => bookmark.id === target.id ? updated : bookmark)
+    bookmarkEditorOpen.value = false
+    toast.success('书签备注已保存。')
+  } catch (saveError) {
+    bookmarkNoteError.value = getErrorMessage(saveError, '保存备注失败，请稍后重试。')
+  } finally {
+    savingBookmarkNote.value = false
+  }
+}
+
+function requestDeleteBookmark(bookmark: Bookmark): void {
+  deletingBookmark.value = bookmark
+  bookmarkDeleteOpen.value = true
+}
+
+async function confirmDeleteBookmark(): Promise<void> {
+  const bookmark = deletingBookmark.value
+  if (!bookmark || deletingBookmarkBusy.value) return
+  deletingBookmarkBusy.value = true
   try {
     await deleteBookmark(bookmark.id)
     bookmarks.value = bookmarks.value.filter((item) => item.id !== bookmark.id)
+    bookmarkDeleteOpen.value = false
     toast.success('已删除书签。')
   } catch (bookmarkError) {
     toast.error(
       getErrorMessage(bookmarkError, '删除书签失败，请稍后重试。'),
     )
+  } finally {
+    deletingBookmarkBusy.value = false
   }
 }
 
@@ -1006,6 +1063,15 @@ watch(tocQuery, async () => {
   tocListRef.value?.closest<HTMLElement>('.app-dialog__body')?.scrollTo({ top: 0 })
 })
 
+watch([bookmarkQuery, bookmarkSort], () => {
+  bookmarkVisibleLimit.value = 100
+})
+
+watch(bookmarksOpen, open => {
+  if (!open) bookmarkQuery.value = ''
+  bookmarkVisibleLimit.value = 100
+})
+
 watch(
   () => route.query.chapter,
   (value) => {
@@ -1160,9 +1226,10 @@ onBeforeUnmount(() => {
           <AppIcon name="chevron-left" :size="21" />
           <span>上一页</span>
         </button>
-        <button type="button" class="reader-tool" @click="addCurrentBookmark">
+        <button type="button" class="reader-tool" :disabled="addingBookmark || chapterLoading"
+          :aria-pressed="Boolean(currentBookmark)" @click="addCurrentBookmark">
           <AppIcon name="bookmark" :size="20" />
-          <span>加书签</span>
+          <span>{{ addingBookmark ? '添加中…' : currentBookmark ? '已加书签' : '加书签' }}</span>
         </button>
         <button type="button" class="reader-tool" @click="settingsOpen = true">
           <AppIcon name="type" :size="21" />
@@ -1243,19 +1310,44 @@ onBeforeUnmount(() => {
         </p>
       </BaseDialog>
 
-      <BaseDialog v-model:open="bookmarksOpen" title="书签" variant="sheet">
+      <BaseDialog v-model:open="bookmarksOpen" title="书签" variant="sheet" fixed-height>
+        <template #subheader>
+          <div class="toc-toolbar">
+            <label class="toc-search">
+              <AppIcon name="search" :size="16" />
+              <input v-model="bookmarkQuery" type="search" class="toc-search__input"
+                placeholder="搜索章节、摘录或备注" aria-label="搜索书签" autocomplete="off" />
+              <button v-if="bookmarkQuery" type="button" class="toc-search__clear"
+                aria-label="清除书签搜索" @click="bookmarkQuery = ''">
+                <AppIcon name="close" :size="14" />
+              </button>
+            </label>
+            <div class="bookmark-toolbar__row">
+              <p class="toc-summary" role="status">{{ bookmarkSummary }}</p>
+              <label class="sr-only" for="bookmark-sort">书签排序</label>
+              <select id="bookmark-sort" v-model="bookmarkSort" class="select-control bookmark-sort">
+                <option value="newest">最新添加</option>
+                <option value="position">阅读顺序</option>
+              </select>
+            </div>
+          </div>
+        </template>
         <div v-if="bookmarks.length === 0" class="sheet-empty">
           <AppIcon name="bookmark" :size="28" />
           <p>还没有书签。阅读时点底部“加书签”即可记录当前位置。</p>
         </div>
+        <p v-else-if="filteredBookmarks.length === 0" class="toc-empty">没有找到匹配的书签，试试其他关键词。</p>
         <ul v-else class="bookmark-list">
-          <li v-for="bookmark in bookmarks" :key="bookmark.id" class="bookmark-entry">
+          <li v-for="bookmark in visibleBookmarks" :key="bookmark.id" class="bookmark-entry"
+            :class="{ 'is-current': bookmark.id === currentBookmark?.id }">
             <button
               type="button"
               class="bookmark-entry__main"
               @click="jumpToBookmark(bookmark)"
             >
               <span class="bookmark-entry__chapter">{{ bookmark.chapterTitle }}</span>
+              <span v-if="bookmark.id === currentBookmark?.id" class="bookmark-entry__current">当前位置</span>
+              <span v-if="bookmark.note" class="bookmark-entry__note">{{ bookmark.note }}</span>
               <span class="bookmark-entry__excerpt">{{ bookmark.excerpt }}</span>
               <span class="bookmark-entry__time">
                 {{ formatRelativeTime(bookmark.createdAt) }}
@@ -1265,16 +1357,59 @@ onBeforeUnmount(() => {
               type="button"
               class="icon-button icon-button--quiet"
               :aria-label="`删除书签：${bookmark.chapterTitle}`"
-              @click="removeBookmarkItem(bookmark)"
+              :disabled="deletingBookmarkBusy"
+              @click="requestDeleteBookmark(bookmark)"
             >
               <AppIcon name="trash" :size="17" />
             </button>
+            <button type="button" class="text-button bookmark-entry__edit"
+              :disabled="savingBookmarkNote" :aria-label="`编辑书签备注：${bookmark.chapterTitle}`"
+              @click="editBookmarkNote(bookmark)">备注</button>
           </li>
         </ul>
+        <button v-if="visibleBookmarks.length < filteredBookmarks.length" type="button"
+          class="button bookmark-load-more" @click="bookmarkVisibleLimit += 100">
+          显示更多（还有 {{ filteredBookmarks.length - visibleBookmarks.length }} 个）
+        </button>
         <template #footer>
-          <button type="button" class="button button--primary" @click="addCurrentBookmark">
+          <button type="button" class="button button--primary" :disabled="addingBookmark || chapterLoading"
+            @click="addCurrentBookmark">
             <AppIcon name="bookmark" :size="17" />
-            在当前位置添加书签
+            {{ currentBookmark ? '当前位置已有书签' : addingBookmark ? '正在添加…' : '在当前位置添加书签' }}
+          </button>
+        </template>
+      </BaseDialog>
+
+      <BaseDialog v-model:open="bookmarkEditorOpen" title="编辑书签备注">
+        <form id="bookmark-note-form" class="bookmark-note-form" @submit.prevent="saveBookmarkNote">
+          <p class="settings-body-text">{{ editingBookmark?.chapterTitle }}</p>
+          <div class="field">
+            <label for="bookmark-note">备注（选填）</label>
+            <textarea id="bookmark-note" v-model="bookmarkNote" class="bookmark-note-input"
+              :maxlength="MAX_BOOKMARK_NOTE_CHARS" :disabled="savingBookmarkNote" autofocus
+              placeholder="记下人物、情节或你想回看的原因" aria-describedby="bookmark-note-hint" />
+            <p id="bookmark-note-hint" class="field__hint">{{ bookmarkNote.length }} / {{ MAX_BOOKMARK_NOTE_CHARS }} 字，清空后保存可移除备注。</p>
+          </div>
+          <p v-if="bookmarkNoteError" class="notice notice--error" role="alert">{{ bookmarkNoteError }}</p>
+        </form>
+        <template #footer>
+          <button type="button" class="button" :disabled="savingBookmarkNote" @click="bookmarkEditorOpen = false">取消</button>
+          <button type="submit" form="bookmark-note-form" class="button button--primary" :disabled="savingBookmarkNote">
+            {{ savingBookmarkNote ? '保存中…' : '保存备注' }}
+          </button>
+        </template>
+      </BaseDialog>
+
+      <BaseDialog v-model:open="bookmarkDeleteOpen" title="删除这个书签？">
+        <div class="bookmark-note-form">
+          <p>{{ deletingBookmark?.chapterTitle }}</p>
+          <p v-if="deletingBookmark?.note" class="bookmark-entry__note">{{ deletingBookmark.note }}</p>
+          <p class="settings-body-text">删除后无法撤销，阅读进度不受影响。</p>
+        </div>
+        <template #footer>
+          <button type="button" class="button" :disabled="deletingBookmarkBusy" @click="bookmarkDeleteOpen = false">取消</button>
+          <button type="button" class="button button--danger" :disabled="deletingBookmarkBusy" @click="confirmDeleteBookmark">
+            {{ deletingBookmarkBusy ? '删除中…' : '删除书签' }}
           </button>
         </template>
       </BaseDialog>

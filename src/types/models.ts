@@ -74,6 +74,8 @@ export interface Bookmark {
   charOffset: number
   chapterTitle: string
   excerpt: string
+  excerptVersion?: number
+  note?: string
   createdAt: number
 }
 

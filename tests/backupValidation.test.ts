@@ -90,6 +90,17 @@ function expectValidationError(value: unknown, fragment?: string): void {
 }
 
 describe('validateBackupManifest', () => {
+  it('keeps optional bookmark notes and remains compatible with older backups', () => {
+    const book = makeBook()
+    expect(validateBackupManifest(makeManifest()).books[0]?.bookmarks[0]?.note).toBeUndefined()
+    book.bookmarks[0]!.note = '  人物出场  '
+    expect(validateBackupManifest(makeManifest([book])).books[0]?.bookmarks[0]?.note).toBe('人物出场')
+    book.bookmarks[0]!.note = '甲'.repeat(301)
+    expectValidationError(makeManifest([book]), 'note')
+    book.bookmarks[0]!.note = 123 as unknown as string
+    expectValidationError(makeManifest([book]), 'note')
+  })
+
   it('preserves optional authors and accepts older backups without them', () => {
     const withAuthor = validateBackupManifest(makeManifest([makeBook({ author: '  某位作者  ' })]))
     expect(withAuthor.books[0]?.author).toBe('某位作者')

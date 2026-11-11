@@ -76,6 +76,7 @@ function makeBundle(contentHash: string): BookBundle {
         charOffset: 2,
         chapterTitle: '第一章 山雨',
         excerpt: '夜色',
+        note: '回看人物出场',
         createdAt: now,
       },
     ],
@@ -140,6 +141,7 @@ describe('backup export', () => {
       originalSize: new TextEncoder().encode(ORIGINAL_TEXT).byteLength,
     })
     expect(backup.manifest.books[0]?.bookmarks).toHaveLength(1)
+    expect(backup.manifest.books[0]?.bookmarks[0]?.note).toBe('回看人物出场')
 
     const entries = unzipSync(
       new Uint8Array(await backup.blob.arrayBuffer()),
@@ -177,6 +179,7 @@ describe('backup reading', () => {
 
     const prepared = await readBackupArchive(await blobToFile(backup.blob))
     expect(prepared.manifest.bookCount).toBe(1)
+    expect(prepared.manifest.books[0]?.bookmarks[0]?.note).toBe('回看人物出场')
     expect(prepared.plan.accepted[0]?.book.author).toBe('某位作者')
     expect(prepared.plan.accepted).toHaveLength(1)
     expect(prepared.plan.skipped).toEqual([])

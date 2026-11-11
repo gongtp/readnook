@@ -11,6 +11,8 @@ export const MAX_BACKUP_UNCOMPRESSED_BYTES = 250 * 1024 * 1024
 export const AUTO_SEGMENT_CHARS = 8_000
 // 识别到章节标题时不再按字数拆章；只有单章大到会影响滚动时才兜底分段。
 export const MAX_CHAPTER_CHARS = 100_000
+export const MAX_BOOKMARKS_PER_BOOK = 5_000
+export const MAX_BOOKMARK_NOTE_CHARS = 300
 
 export const BACKUP_FORMAT = 'readnook-backup'
 export const BACKUP_VERSION = 1

@@ -1,5 +1,7 @@
 import { db, type ReadNookDatabase } from '@/db/database'
 import { countFrontMatterChapters } from '@/domain/books/frontMatter'
+import { BOOKMARK_EXCERPT_VERSION, createBookmarkExcerpt, normalizeBookmarkNote } from '@/domain/bookmarks'
+import { MAX_BOOKMARKS_PER_BOOK } from '@/config/app'
 import type {
   Book,
   BookFile,
@@ -132,15 +134,65 @@ export async function listBookmarks(
   bookId: string,
   database: ReadNookDatabase = db,
 ): Promise<Bookmark[]> {
-  const rows = await database.bookmarks.where('bookId').equals(bookId).toArray()
-  return rows.sort((a, b) => b.createdAt - a.createdAt)
+  return database.transaction('rw', [database.bookmarks, database.chapters, database.chapterContents], async () => {
+    const rows = await database.bookmarks.where('bookId').equals(bookId).toArray()
+    const legacyByChapter = new Map<string, Bookmark[]>()
+    for (const row of rows) {
+      if (row.excerptVersion === BOOKMARK_EXCERPT_VERSION) continue
+      const group = legacyByChapter.get(row.chapterKey) ?? []
+      group.push(row)
+      legacyByChapter.set(row.chapterKey, group)
+    }
+    // 每章只读取一次正文；旧书签只更新摘录，保留原始定位、备注和创建时间。
+    for (const [chapterKey, bookmarks] of legacyByChapter) {
+      const chapter = await getChapter(bookId, chapterKey, database)
+      if (!chapter) continue
+      const content = await database.chapterContents.get(chapter.id)
+      if (!content) continue
+      for (const bookmark of bookmarks) {
+        bookmark.excerpt = createBookmarkExcerpt(content.content, bookmark.charOffset, chapter.title)
+        bookmark.excerptVersion = BOOKMARK_EXCERPT_VERSION
+        await database.bookmarks.update(bookmark.id, {
+          excerpt: bookmark.excerpt,
+          excerptVersion: bookmark.excerptVersion,
+        })
+      }
+    }
+    return rows.sort((a, b) => b.createdAt - a.createdAt)
+  })
 }
 
 export async function addBookmark(
   bookmark: Bookmark,
   database: ReadNookDatabase = db,
 ): Promise<void> {
-  await database.bookmarks.add(bookmark)
+  await database.transaction('rw', database.bookmarks, async () => {
+    const nearby = await database.bookmarks.where('[bookId+chapterKey]')
+      .equals([bookmark.bookId, bookmark.chapterKey]).toArray()
+    if (nearby.some(row => Math.abs(row.charOffset - bookmark.charOffset) <= 2)) {
+      throw new Error('这个位置已经有书签了。')
+    }
+    const count = await database.bookmarks.where('bookId').equals(bookmark.bookId).count()
+    if (count >= MAX_BOOKMARKS_PER_BOOK) {
+      throw new Error(`每本书最多支持 ${MAX_BOOKMARKS_PER_BOOK} 个书签，请先删除不需要的书签。`)
+    }
+    await database.bookmarks.add({ ...bookmark, note: normalizeBookmarkNote(bookmark.note ?? '') })
+  })
+}
+
+export async function updateBookmarkNote(
+  bookmarkId: string,
+  note: string,
+  database: ReadNookDatabase = db,
+): Promise<Bookmark> {
+  const normalized = normalizeBookmarkNote(note)
+  return database.transaction('rw', database.bookmarks, async () => {
+    const bookmark = await database.bookmarks.get(bookmarkId)
+    if (!bookmark) throw new Error('这个书签已不存在，请重新打开书签列表。')
+    const updated = { ...bookmark, note: normalized }
+    await database.bookmarks.put(updated)
+    return updated
+  })
 }
 
 export async function deleteBookmark(

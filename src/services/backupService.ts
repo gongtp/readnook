@@ -34,6 +34,7 @@ import type {
 import { createId, isSafeId } from '@/utils/id'
 import { formatBackupFileName } from '@/utils/format'
 import { sha256Hex } from '@/utils/hash'
+import { BOOKMARK_EXCERPT_VERSION, createBookmarkExcerpt } from '@/domain/bookmarks'
 
 type AsyncZippable = Record<
   string,
@@ -427,7 +428,9 @@ export async function executeBackupRestore(
           chapterIndex: chapter.order,
           charOffset: clampCharOffset(bookmark.charOffset, chapter.charCount),
           chapterTitle: chapter.title,
-          excerpt: bookmark.excerpt,
+          excerpt: createBookmarkExcerpt(chapter.content, clampCharOffset(bookmark.charOffset, chapter.charCount), chapter.title),
+          excerptVersion: BOOKMARK_EXCERPT_VERSION,
+          note: bookmark.note,
           createdAt: bookmark.createdAt,
         })
       }
